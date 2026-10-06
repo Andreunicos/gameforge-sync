@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { buildPreview } from "../preview";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { buildPreview, findEntry } from "../preview";
 import type { RoomSync } from "../sync/roomSync";
 import type { Room } from "../types";
 
@@ -17,6 +17,17 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
   const [auto, setAuto] = useState(true);
   const [device, setDevice] = useState<Device>("free");
   const [logs, setLogs] = useState<LogLine[]>([]);
+  const st = useSyncExternalStore(
+    (l) => sync.subscribe(l),
+    () => sync.state,
+  );
+  // Páginas .html da sala; abrir uma no editor já mostra ela aqui.
+  const pages = st.files.map((f) => f.path).filter((p) => /\.html?$/i.test(p)).sort();
+  const [page, setPage] = useState<string | null>(null);
+  useEffect(() => {
+    if (st.active && /\.html?$/i.test(st.active)) setPage(st.active);
+  }, [st.active]);
+  const entry = page && pages.includes(page) ? page : findEntry(pages);
   const timer = useRef<number | undefined>(undefined);
   const autoRef = useRef(auto);
   autoRef.current = auto;
@@ -26,10 +37,11 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
       paths: sync.paths(),
       contentOf: (p) => sync.contentOf(p),
       assetsBase: room.assetsBase,
+      entry,
     });
     setLogs(warnings.map((text) => ({ level: "warn", text })));
     if (frame.current) frame.current.srcdoc = html;
-  }, [sync, room.assetsBase]);
+  }, [sync, room.assetsBase, entry]);
 
   useEffect(() => {
     reload();
@@ -65,6 +77,20 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto
         </label>
         <span className="grow" />
+        {pages.length > 1 && (
+          <select
+            value={entry ?? ""}
+            onChange={(e) => setPage(e.target.value)}
+            title="Qual página do jogo mostrar"
+            style={{ background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 6, padding: "3px 6px", maxWidth: 160 }}
+          >
+            {pages.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           value={device}
           onChange={(e) => setDevice(e.target.value as Device)}

@@ -5,6 +5,7 @@ import { logout, displayName } from "../auth";
 import { createRoom, deleteRoom, joinWithCode, watchMyRooms } from "../rooms";
 import type { Room } from "../types";
 import { Brand } from "./Brand";
+import { CartIcon, TrashIcon } from "./PixelArt";
 
 const ROLE_LABEL = { owner: "dono", editor: "editor", viewer: "espectador" } as const;
 
@@ -72,6 +73,7 @@ Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
           {rooms?.map((r) => (
             <div key={r.id} className="room-row">
               <button className="room-item" onClick={() => go({ name: "room", id: r.id })} disabled={deleting === r.id}>
+                <CartIcon seed={r.id} />
                 <span className="grow ellipsis" style={{ fontWeight: 600 }}>
                   {deleting === r.id ? `Apagando ${r.name}…` : r.name}
                 </span>
@@ -80,7 +82,7 @@ Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
               </button>
               {r.ownerId === user.uid && (
                 <button className="ghost danger room-del" title="Apagar sala" disabled={!!deleting} onClick={() => void remove(r)}>
-                  🗑
+                  <TrashIcon />
                 </button>
               )}
             </div>

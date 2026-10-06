@@ -7,6 +7,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { RoomsScreen } from "./components/RoomsScreen";
 import { RoomScreen } from "./components/RoomScreen";
 import { Brand } from "./components/Brand";
+import { PixelBackdrop } from "./components/PixelBackdrop";
 import { ALLOWED_EMAILS } from "./config";
 import { logout } from "./auth";
 
@@ -49,10 +50,20 @@ export function Home() {
       });
   }, [user, route]);
 
-  if (user === undefined) return <div className="center-screen muted">Carregando…</div>;
-  if (!user) return <LoginScreen />;
-  if (!ALLOWED_EMAILS.includes(user.email ?? "")) return <NotAllowed email={user.email} />;
-  if (route.name === "room") return <RoomScreen key={route.id} user={user} roomId={route.id} />;
-  if (route.name === "join") return <div className="center-screen muted">Entrando na sala…</div>;
-  return <RoomsScreen user={user} initialError={joinError} />;
+  const inRoom = !!user && ALLOWED_EMAILS.includes(user.email ?? "") && route.name === "room";
+  return (
+    <>
+      {!inRoom && <PixelBackdrop />}
+      {screen()}
+    </>
+  );
+
+  function screen() {
+    if (user === undefined) return <div className="center-screen muted">Carregando…</div>;
+    if (!user) return <LoginScreen />;
+    if (!ALLOWED_EMAILS.includes(user.email ?? "")) return <NotAllowed email={user.email} />;
+    if (route.name === "room") return <RoomScreen key={route.id} user={user} roomId={route.id} />;
+    if (route.name === "join") return <div className="center-screen muted">Entrando na sala…</div>;
+    return <RoomsScreen user={user} initialError={joinError} />;
+  }
 }

@@ -14,6 +14,8 @@ export interface PreviewInput {
   paths: string[];
   contentOf(path: string): string | undefined;
   assetsBase: string;
+  /** Página escolhida no preview; sem ela (ou se sumiu da sala), vale o index.html. */
+  entry?: string | null;
 }
 
 export function findEntry(paths: string[]): string | null {
@@ -52,7 +54,7 @@ const IMPORT_RE =
 
 export function buildPreview(input: PreviewInput): { html: string; warnings: string[] } {
   const warnings: string[] = [];
-  const entry = findEntry(input.paths);
+  const entry = (input.entry && input.paths.includes(input.entry) ? input.entry : null) ?? findEntry(input.paths);
   if (!entry) {
     return {
       html: `<!doctype html><body style="font-family:system-ui;color:#9a8fb0;background:#120f19;display:grid;place-items:center;height:100vh;margin:0"><p style="text-align:center;padding:20px">O jogo aparece aqui quando a sala tiver um <b style="color:#ffb26b">index.html</b>.</p></body>`,

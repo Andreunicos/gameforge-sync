@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import "@fontsource/jersey-10";
 import "./styles.css";
 
 if (import.meta.env.PROD) {
