@@ -1,0 +1,10 @@
+node_modules/
+dist/
+target/
+app/src-tauri/gen/
+*.log
+.firebase/
+*.key
+*.jks
+secrets/
+.DS_Store

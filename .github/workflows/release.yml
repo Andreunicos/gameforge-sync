@@ -1,0 +1,50 @@
+# Publica uma versão nova do app.
+# Como usar: suba "version" em app/package.json, faça commit, crie a tag e mande:
+#   git tag v0.1.1 && git push origin main --tags
+# O Actions compila, assina e publica a Release com o instalador e o latest.json.
+# O app de quem já instalou vê a versão nova ao abrir.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - name: Instalar dependências
+        working-directory: app
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: v__VERSION__
+          releaseName: GameForge Sync v__VERSION__
+          releaseBody: Baixe o instalador abaixo (GameForge.Sync_x.y.z_x64-setup.exe). Quem já tem o app recebe a atualização ao abrir.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

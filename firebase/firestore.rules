@@ -1,0 +1,134 @@
+rules_version = '2';
+
+// Porteiro do GameForge Sync. Não existe servidor próprio: app e gfs falam direto
+// com o Firestore, então tudo que importa (quem lê, quem grava, versões) é garantido aqui.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function roomData(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+    }
+
+    function isMember(roomId) {
+      return signedIn() && request.auth.uid in roomData(roomId).memberIds;
+    }
+
+    function canEdit(roomId) {
+      let room = roomData(roomId);
+      return signedIn()
+        && request.auth.uid in room.memberIds
+        && room.roles[request.auth.uid] in ['owner', 'editor'];
+    }
+
+    function isAuthor(data) {
+      return data.author.uid == request.auth.uid
+        && data.author.name is string
+        && data.author.kind in ['human', 'claude'];
+    }
+
+    // ── salas ──────────────────────────────────────────────────────────────
+    match /rooms/{roomId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.memberIds;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.memberIds == [request.auth.uid]
+        && request.resource.data.roles.size() == 1
+        && request.resource.data.roles[request.auth.uid] == 'owner'
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 80;
+
+      // Dono mexe em tudo (menos trocar o dono); os outros só podem "entrar" com convite válido.
+      allow update: if signedIn() && (
+        (resource.data.ownerId == request.auth.uid
+          && request.resource.data.ownerId == resource.data.ownerId
+          && request.resource.data.roles[resource.data.ownerId] == 'owner')
+        || isJoining(roomId)
+      );
+
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      function isJoining(roomId) {
+        let uid = request.auth.uid;
+        let invite = get(/databases/$(database)/documents/invites/$(request.resource.data.lastJoinCode)).data;
+        return !(uid in resource.data.memberIds)
+          && invite.roomId == roomId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'roles', 'names', 'lastJoinCode'])
+          && request.resource.data.memberIds == resource.data.memberIds.concat([uid])
+          && request.resource.data.roles.diff(resource.data.roles).affectedKeys().hasOnly([uid])
+          && request.resource.data.roles[uid] == invite.role
+          && request.resource.data.names.diff(resource.data.names).affectedKeys().hasOnly([uid]);
+      }
+
+      // ── arquivos de código: um documento por arquivo, com versão ──
+      match /files/{fileId} {
+        allow read: if isMember(roomId);
+
+        allow create: if canEdit(roomId)
+          && validFile()
+          && request.resource.data.version == 1;
+
+        // Só grava se partiu da versão atual (o merge acontece no cliente antes).
+        allow update: if canEdit(roomId)
+          && validFile()
+          && request.resource.data.path == resource.data.path
+          && request.resource.data.version == resource.data.version + 1;
+
+        allow delete: if canEdit(roomId);
+
+        function validFile() {
+          let d = request.resource.data;
+          return d.keys().hasOnly(['path', 'content', 'version', 'author', 'updatedAt'])
+            && d.path is string
+            && d.path.size() <= 300
+            && d.content is string
+            && d.version is int
+            && d.updatedAt == request.time
+            && isAuthor(d);
+        }
+      }
+
+      // ── feed de atividade (só cresce) ──
+      match /activity/{eventId} {
+        allow read: if isMember(roomId);
+        allow create: if canEdit(roomId)
+          && isAuthor(request.resource.data)
+          && request.resource.data.ts == request.time
+          && request.resource.data.summary is string
+          && request.resource.data.summary.size() <= 300;
+      }
+
+      // ── reservas por função (Fase 3, usadas pelo gfs claim) ──
+      match /claims/{claimId} {
+        allow read: if isMember(roomId);
+        allow create, update: if canEdit(roomId) && request.resource.data.owner.uid == request.auth.uid;
+        allow delete: if canEdit(roomId);
+      }
+
+      // ── chat da sala (Fase 3) ──
+      match /chat/{msgId} {
+        allow read: if isMember(roomId);
+        allow create: if isMember(roomId)
+          && isAuthor(request.resource.data)
+          && request.resource.data.ts == request.time
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 4000;
+      }
+    }
+
+    // ── convites: quem sabe o código consegue ler (mas ninguém consegue listar) ──
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && roomData(request.resource.data.roomId).ownerId == request.auth.uid
+        && request.resource.data.role in ['editor', 'viewer'];
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+    }
+  }
+}
