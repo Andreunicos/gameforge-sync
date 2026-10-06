@@ -25,6 +25,10 @@ service cloud.firestore {
       return signedIn() && request.auth.uid in roomData(roomId).memberIds;
     }
 
+    function isOwner(roomId) {
+      return signedIn() && roomData(roomId).ownerId == request.auth.uid;
+    }
+
     function canEdit(roomId) {
       let room = roomData(roomId);
       return signedIn()
@@ -103,6 +107,7 @@ service cloud.firestore {
       // ── feed de atividade (só cresce) ──
       match /activity/{eventId} {
         allow read: if isMember(roomId);
+        allow delete: if isOwner(roomId);
         allow create: if canEdit(roomId)
           && isAuthor(request.resource.data)
           && request.resource.data.ts == request.time
@@ -120,6 +125,7 @@ service cloud.firestore {
       // ── chat da sala (Fase 3) ──
       match /chat/{msgId} {
         allow read: if isMember(roomId);
+        allow delete: if isOwner(roomId);
         allow create: if isMember(roomId)
           && isAuthor(request.resource.data)
           && request.resource.data.ts == request.time

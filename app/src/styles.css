@@ -220,3 +220,7 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-si
 .people-list { display: flex; flex-direction: column; gap: 6px; }
 .person { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 button.small { font-size: 12px; padding: 4px 10px; }
+.room-row { display: flex; gap: 6px; align-items: stretch; }
+.room-row .room-item { flex: 1; min-width: 0; }
+.room-del { padding: 0 12px; opacity: 0.6; }
+.room-del:hover:not(:disabled) { opacity: 1; }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { User } from "firebase/auth";
 import { go } from "../App";
 import { logout, displayName } from "../auth";
-import { createRoom, joinWithCode, watchMyRooms } from "../rooms";
+import { createRoom, deleteRoom, joinWithCode, watchMyRooms } from "../rooms";
 import type { Room } from "../types";
 import { Brand } from "./Brand";
 
@@ -14,6 +14,29 @@ export function RoomsScreen({ user, initialError }: { user: User; initialError: 
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const remove = async (r: Room) => {
+    if (!confirm(`Apagar a sala "${r.name}" para TODO MUNDO?
+
+Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
+(A pasta do Claude no seu PC continua lá.)`))
+      return;
+    setDeleting(r.id);
+    setError(null);
+    try {
+      await deleteRoom(r);
+      try {
+        localStorage.removeItem(`gfs-mirror-${r.id}`);
+      } catch {
+        /* ignora */
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   useEffect(() => watchMyRooms(user.uid, setRooms, (e) => setError(e.message)), [user.uid]);
 
@@ -47,13 +70,20 @@ export function RoomsScreen({ user, initialError }: { user: User; initialError: 
           {rooms === null && <span className="muted">Carregando…</span>}
           {rooms?.length === 0 && <span className="muted">Nenhuma sala ainda. Crie uma ou entre com um código.</span>}
           {rooms?.map((r) => (
-            <button key={r.id} className="room-item" onClick={() => go({ name: "room", id: r.id })}>
-              <span className="grow ellipsis" style={{ fontWeight: 600 }}>
-                {r.name}
-              </span>
-              <span className="muted small">{r.memberIds.length} pessoa{r.memberIds.length > 1 ? "s" : ""}</span>
-              <span className="role">{ROLE_LABEL[r.roles[user.uid]] ?? "?"}</span>
-            </button>
+            <div key={r.id} className="room-row">
+              <button className="room-item" onClick={() => go({ name: "room", id: r.id })} disabled={deleting === r.id}>
+                <span className="grow ellipsis" style={{ fontWeight: 600 }}>
+                  {deleting === r.id ? `Apagando ${r.name}…` : r.name}
+                </span>
+                <span className="muted small">{r.memberIds.length} pessoa{r.memberIds.length > 1 ? "s" : ""}</span>
+                <span className="role">{ROLE_LABEL[r.roles[user.uid]] ?? "?"}</span>
+              </button>
+              {r.ownerId === user.uid && (
+                <button className="ghost danger room-del" title="Apagar sala" disabled={!!deleting} onClick={() => void remove(r)}>
+                  🗑
+                </button>
+              )}
+            </div>
           ))}
         </div>
 
