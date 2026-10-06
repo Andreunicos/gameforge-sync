@@ -21,13 +21,32 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
     (l) => sync.subscribe(l),
     () => sync.state,
   );
-  // Páginas .html da sala; abrir uma no editor já mostra ela aqui.
-  const pages = st.files.map((f) => f.path).filter((p) => /\.html?$/i.test(p)).sort();
-  const [page, setPage] = useState<string | null>(null);
-  useEffect(() => {
-    if (st.active && /\.html?$/i.test(st.active)) setPage(st.active);
-  }, [st.active]);
-  const entry = page && pages.includes(page) ? page : findEntry(pages);
+  // O preview roda o jogo inteiro como um site: começa na página inicial e segue os links do próprio jogo.
+  const pages = st.files.map((f) => f.path).filter((p) => /[.]html?$/i.test(p)).sort();
+  const startKey = `gfs-start-${room.id}`;
+  const [start, setStart] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(startKey);
+    } catch {
+      return null;
+    }
+  });
+  const home = start && pages.includes(start) ? start : findEntry(pages);
+  const [current, setCurrent] = useState<string | null>(null);
+  const entry = current && pages.includes(current) ? current : home;
+  const storage = useRef<Record<string, string>>({}); // localStorage do jogo, igual em todas as páginas
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+
+  const chooseStart = (p: string) => {
+    setStart(p);
+    setCurrent(null);
+    try {
+      localStorage.setItem(startKey, p);
+    } catch {
+      /* sem storage: vale só nesta sessão */
+    }
+  };
   const timer = useRef<number | undefined>(undefined);
   const autoRef = useRef(auto);
   autoRef.current = auto;
@@ -38,6 +57,7 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
       contentOf: (p) => sync.contentOf(p),
       assetsBase: room.assetsBase,
       entry,
+      storage: storage.current,
     });
     setLogs(warnings.map((text) => ({ level: "warn", text })));
     if (frame.current) frame.current.srcdoc = html;
@@ -59,6 +79,18 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
   useEffect(() => {
     const on = (e: MessageEvent) => {
       if (e.source !== frame.current?.contentWindow || !e.data?.__gfs) return;
+      const d = e.data;
+      if (Array.isArray(d.store)) {
+        const [k, v] = d.store as [string, string | null];
+        if (v === null) delete storage.current[k];
+        else storage.current[k] = v;
+        return;
+      }
+      if (typeof d.nav === "string") {
+        if (pagesRef.current.includes(d.nav)) setCurrent(d.nav);
+        else setLogs((l) => [...l, { level: "warn", text: `O jogo tentou abrir ${d.nav}, mas essa página não existe na sala.` }]);
+        return;
+      }
       setLogs((l) => [...l.slice(-199), { level: String(e.data.level), text: String(e.data.text) }]);
     };
     window.addEventListener("message", on);
@@ -70,23 +102,31 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
   return (
     <section className="preview-col">
       <div className="preview-bar">
-        <button className="ghost icon" onClick={reload} title="Recarregar o jogo">
+        <button
+          className="ghost icon"
+          onClick={() => {
+            if (current && current !== home) setCurrent(null);
+            else reload();
+          }}
+          title="Recomeçar o jogo da página inicial"
+        >
           ⟳
         </button>
         <label className="row small muted" title="Recarregar sozinho quando alguém mexer no código">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto
         </label>
         <span className="grow" />
+        {entry && entry !== home && <span className="small muted ellipsis" title="Página em que o jogo está agora">▸ {entry}</span>}
         {pages.length > 1 && (
           <select
-            value={entry ?? ""}
-            onChange={(e) => setPage(e.target.value)}
-            title="Qual página do jogo mostrar"
+            value={home ?? ""}
+            onChange={(e) => chooseStart(e.target.value)}
+            title="Página inicial do jogo (por onde o preview começa)"
             style={{ background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 6, padding: "3px 6px", maxWidth: 160 }}
           >
             {pages.map((p) => (
               <option key={p} value={p}>
-                {p}
+                Início: {p}
               </option>
             ))}
           </select>

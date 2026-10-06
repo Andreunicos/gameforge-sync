@@ -16,6 +16,8 @@ export interface PreviewInput {
   assetsBase: string;
   /** Página escolhida no preview; sem ela (ou se sumiu da sala), vale o index.html. */
   entry?: string | null;
+  /** localStorage da sala, o mesmo em todas as páginas enquanto o preview está aberto. */
+  storage?: Record<string, string>;
 }
 
 export function findEntry(paths: string[]): string | null {
@@ -40,14 +42,32 @@ export function resolvePath(from: string, spec: string): string | null {
   return out.join("/");
 }
 
-const SHIM = `(function(){
-var P=function(level,args){try{parent.postMessage({__gfs:1,level:level,text:Array.prototype.map.call(args,function(a){try{return a instanceof Error?(a.stack||a.message):(typeof a==='object'?JSON.stringify(a):String(a))}catch(e){return String(a)}}).join(' ')},'*')}catch(e){}};
+// Raiz falsa quando a sala não tem assets publicados: só serve para os links entre páginas resolverem.
+const FAKE_ROOT = "https://sala.gameforge.invalid/";
+
+/** Roda antes do jogo: console → app, localStorage único da sala, navegação entre páginas → app. */
+function shim(storage: Record<string, string>, root: string) {
+  return `(function(S,ROOT){
+var post=function(m){m.__gfs=1;try{parent.postMessage(m,'*')}catch(e){}};
+var P=function(level,args){post({level:level,text:Array.prototype.map.call(args,function(a){try{return a instanceof Error?(a.stack||a.message):(typeof a==='object'?JSON.stringify(a):String(a))}catch(e){return String(a)}}).join(' ')})};
 ['log','info','warn','error'].forEach(function(l){var o=console[l];console[l]=function(){P(l,arguments);return o.apply(console,arguments)}});
 addEventListener('error',function(e){if(e.message)P('error',[e.message+(e.lineno?' (linha '+e.lineno+')':'')])},true);
 addEventListener('unhandledrejection',function(e){var r=e.reason;P('error',['Promise rejeitada: '+(r&&r.message||r)])});
-function M(){var d={};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}
-try{window.localStorage.length}catch(e){try{Object.defineProperty(window,'localStorage',{value:M()});Object.defineProperty(window,'sessionStorage',{value:M()})}catch(_){}}
-})();`;
+function M(d,sync){var tell=function(k,v){if(sync)post({store:[k,v]})};return{getItem:function(k){return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null},setItem:function(k,v){d[k]=String(v);tell(String(k),String(v))},removeItem:function(k){delete d[k];tell(String(k),null)},clear:function(){Object.keys(d).forEach(function(k){tell(k,null)});d={}},key:function(i){return Object.keys(d)[i]||null},get length(){return Object.keys(d).length}}}
+try{window.localStorage.length}catch(e){try{Object.defineProperty(window,'localStorage',{value:M(S,true)});Object.defineProperty(window,'sessionStorage',{value:M({},false)})}catch(_){}}
+function page(u){try{var x=new URL(u,document.baseURI),h=x.origin+x.pathname;if(h.indexOf(ROOT)!==0)return null;var p=decodeURIComponent(h.slice(ROOT.length));if(p===''||p.slice(-1)==='/')p+='index.html';return /[.]html?$/i.test(p)?p:null}catch(e){return null}}
+function go(u){var p=page(u);if(p)post({nav:p});else location.href=u}
+window.__gfsLoc={get href(){return location.href},set href(u){go(String(u))},assign:function(u){go(String(u))},replace:function(u){go(String(u))}};
+document.addEventListener('click',function(e){var a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||(a.target&&a.target!=='_self'))return;var p=page(a.href);if(p){e.preventDefault();post({nav:p})}},true);
+if(window.navigation)navigation.addEventListener('navigate',function(e){if(e.hashChange||e.navigationType==='reload'||e.navigationType==='traverse')return;var p=page(e.destination.url);if(p&&e.cancelable){e.preventDefault();post({nav:p})}});
+})(${JSON.stringify(storage).replace(/</g, "\u003c")},${JSON.stringify(root)});`;
+}
+
+// O iframe não tem origem própria, então o navegador não avisa quando o jogo troca de página.
+// Por isso "location.href = x", "location = x", "location.assign(x)" e "location.replace(x)" passam por __gfsLoc.
+const LOC_SET_RE = /(?<![\w$.])(?:(?:window|document|self|globalThis)\s*\.\s*)?location(?:\s*\.\s*href)?\s*=(?!=)/g;
+const LOC_CALL_RE = /(?<![\w$.])(?:(?:window|document|self|globalThis)\s*\.\s*)?location\s*\.\s*(assign|replace)\s*\(/g;
+export const rewriteNav = (code: string) => code.replace(LOC_SET_RE, "__gfsLoc.href=").replace(LOC_CALL_RE, "__gfsLoc.$1(");
 
 const IMPORT_RE =
   /(\bimport\s*(?:[\w*${}\s,]+?\s*from\s*)?|\bexport\s*[\w*${}\s,]+?\s*from\s*|\bimport\s*\(\s*)(['"])([^'"\n]+)\2/g;
@@ -72,7 +92,7 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
       warnings.push(`Import circular em ${path}: o preview não resolve ciclos entre módulos.`);
       return null;
     }
-    const rewritten = code.replace(IMPORT_RE, (all, head: string, q: string, spec: string) => {
+    const rewritten = rewriteNav(code).replace(IMPORT_RE, (all, head: string, q: string, spec: string) => {
       const target = resolvePath(path, spec);
       if (target === null) return all;
       const url = moduleUrl(target, [...stack, path]);
@@ -110,11 +130,18 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
 
   // Módulos inline com imports relativos
   for (const s of Array.from(doc.querySelectorAll('script[type="module"]:not([src])'))) {
-    s.textContent = (s.textContent ?? "").replace(IMPORT_RE, (all, head: string, q: string, spec: string) => {
+    s.textContent = rewriteNav(s.textContent ?? "").replace(IMPORT_RE, (all, head: string, q: string, spec: string) => {
       const target = resolvePath(entry, spec);
       const url = target === null ? null : moduleUrl(target, []);
       return url ? `${head}${q}${url}${q}` : all;
     });
+  }
+
+  for (const s of Array.from(doc.querySelectorAll("script:not([src])"))) {
+    if (s.getAttribute("type") !== "module") s.textContent = rewriteNav(s.textContent ?? "");
+  }
+  for (const el of Array.from(doc.querySelectorAll("*"))) {
+    for (const at of Array.from(el.attributes)) if (/^on/i.test(at.name)) at.value = rewriteNav(at.value);
   }
 
   for (const l of Array.from(doc.querySelectorAll('link[rel="stylesheet"][href]'))) {
@@ -128,15 +155,13 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
   }
 
   const head = doc.head;
-  if (input.assetsBase) {
-    const base = doc.createElement("base");
-    const dir = dirOf(entry);
-    base.href = input.assetsBase.replace(/\/?$/, "/") + dir;
-    head.prepend(base);
-  }
-  const shim = doc.createElement("script");
-  shim.textContent = SHIM;
-  head.prepend(shim);
+  const root = input.assetsBase ? input.assetsBase.replace(/\/?$/, "/") : FAKE_ROOT;
+  const base = doc.createElement("base");
+  base.href = root + dirOf(entry);
+  head.prepend(base);
+  const pre = doc.createElement("script");
+  pre.textContent = shim(input.storage ?? {}, root);
+  head.prepend(pre);
 
   return { html: "<!doctype html>\n" + doc.documentElement.outerHTML, warnings };
 }
