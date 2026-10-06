@@ -10,14 +10,6 @@ export const firebaseConfig = {
   appId: "1:763579522878:web:6dca74b5cc9235ccfa566f",
 };
 
-// Cliente OAuth do tipo "App para computador" (Google Cloud → APIs e serviços → Credenciais).
-// Usado pelo login no app de PC e pelo gfs. Para apps instalados o Google não trata o
-// "secret" como segredo de verdade, então ele pode ficar no código.
-export const googleDesktopClient = {
-  clientId: "",
-  clientSecret: "",
-};
-
 // Contas que podem usar o app. Quem barra de verdade são as regras do Firebase
 // (firebase/firestore.rules e database.rules.json); aqui é só para mostrar um aviso claro.
 export const ALLOWED_EMAILS = ["andreluizvillanova123@gmail.com", "kaue.bimok@gmail.com", "jonatas3dmodel@gmail.com"];

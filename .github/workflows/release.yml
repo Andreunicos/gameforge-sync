@@ -44,7 +44,11 @@ jobs:
           projectPath: app
           tagName: v__VERSION__
           releaseName: GameForge Sync v__VERSION__
-          releaseBody: Baixe o instalador abaixo (GameForge.Sync_x.y.z_x64-setup.exe). Quem já tem o app recebe a atualização ao abrir.
+          releaseBody: |
+            **Instalar:** baixe aqui embaixo (em Assets) o arquivo que termina em `x64-setup.exe` e abra.
+            Se o Windows mostrar "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo** (o app ainda não tem certificado pago de assinatura).
+
+            Quem já tem o app instalado recebe esta versão sozinho ao abrir.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

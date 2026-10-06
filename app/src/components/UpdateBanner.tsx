@@ -1,57 +1,56 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import type { Update } from "@tauri-apps/plugin-updater";
 
-/** Ao abrir, confere o latest.json da última release no GitHub e oferece atualizar. */
+/**
+ * Ao abrir, confere o latest.json da última release no GitHub. Se tiver versão nova,
+ * baixa, confere a assinatura, instala e reabre sozinho — sem perguntar.
+ */
 export function UpdateBanner() {
-  const [update, setUpdate] = useState<Update | null>(null);
-  const [progress, setProgress] = useState<string | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
+  const [progress, setProgress] = useState("verificando…");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
-    import("@tauri-apps/plugin-updater")
-      .then(({ check }) => check())
-      .then((u) => u && setUpdate(u))
-      .catch((e) => console.warn("Não deu para checar atualização:", e));
-  }, []);
-
-  if (!update) return null;
-
-  const install = async () => {
-    setError(null);
-    let total = 0;
-    let got = 0;
-    try {
+    let cancelled = false;
+    (async () => {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (!update || cancelled) return;
+      setVersion(update.version);
+      let total = 0;
+      let got = 0;
       await update.downloadAndInstall((ev) => {
         if (ev.event === "Started") total = ev.data.contentLength ?? 0;
         if (ev.event === "Progress") {
           got += ev.data.chunkLength;
-          setProgress(total ? `${Math.round((got / total) * 100)}%` : `${(got / 1e6).toFixed(1)} MB`);
+          setProgress(total ? `baixando ${Math.round((got / total) * 100)}%` : `baixando ${(got / 1e6).toFixed(1)} MB`);
         }
         if (ev.event === "Finished") setProgress("instalando…");
       });
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
-    } catch (e) {
-      setProgress(null);
+    })().catch((e) => {
+      console.warn("Atualização automática falhou:", e);
       setError(e instanceof Error ? e.message : String(e));
-    }
-  };
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!version) return null;
 
   return (
     <div className="update-banner">
       <span>
-        🎉 Versão <b>{update.version}</b> disponível{update.body ? ` — ${update.body}` : ""}
+        🎉 Atualizando para a versão <b>{version}</b>
       </span>
       <span className="grow" />
-      {error && <span style={{ color: "var(--bad)" }}>{error}</span>}
-      {progress ? (
-        <span className="muted">Baixando {progress}</span>
+      {error ? (
+        <span style={{ color: "var(--bad)" }}>Não deu para atualizar agora ({error}). Tenta abrir o app de novo.</span>
       ) : (
-        <button className="primary" onClick={install}>
-          Atualizar agora
-        </button>
+        <span className="muted">{progress} — o app reabre sozinho</span>
       )}
     </div>
   );

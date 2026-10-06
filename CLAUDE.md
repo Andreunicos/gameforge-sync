@@ -12,10 +12,11 @@ Estrutura do repo (`Andreunicos/gameforge-sync`, público):
   - `src/sync/roomSync.ts` — listener de `rooms/{id}/files`, sessões, criar/apagar/importar pasta, atividade (edição logada no máx. a cada 3 min por arquivo).
   - `src/sync/presence.ts` — presença/cursores no Realtime DB (`presence/{room}/{uid}`), cursores remotos via `sync/editorSetup.ts`.
   - `src/preview.ts` — monta o srcdoc: scripts/CSS da sala inline, módulos ES viram data: URLs, `<base href>` = `room.assetsBase`, localStorage em memória, console → postMessage.
-  - `src-tauri/src/google.rs` — login Google no app via navegador do sistema (loopback 127.0.0.1 + PKCE) → `id_token` → `signInWithCredential`. Precisa do cliente OAuth "App para computador" em `src/config.ts` (o gfs vai usar o mesmo).
   - Versão única em `app/package.json` (o `tauri.conf.json` aponta para ele).
 - `firebase/firestore.rules`, `firebase/database.rules.json` — porteiro (membros, papéis, versão +1, convites). Deploy: `npx firebase-tools deploy --only firestore:rules,database` na raiz.
 - `.github/workflows/release.yml` — tag `v*` → tauri-action (Windows/NSIS) → Release + `latest.json` assinado.
+- Login no app de PC: abre https://gameforge-sync.web.app/login (hosting/login/index.html, Firebase Hosting) no navegador, que devolve o id_token para 127.0.0.1:<porta>/callback (google.rs). Sem cliente OAuth de desktop.
+- Só 3 e-mails autorizados (regras + ALLOWED_EMAILS). Atualização é automática ao abrir (UpdateBanner).
 - Chave de assinatura do updater: `C:\Users\BIGHOUSE\.tauri\gameforge.key` (sem senha). Precisa estar no secret `TAURI_SIGNING_PRIVATE_KEY` do repo e em backup.
 - Convite = documento `invites/{código}`; entrar = update na sala validado pelas regras (`isJoining`).
 - Cuidado no Windows: arquivos que só diferem em maiúsculas (ex.: `main.tsx`/`Main.tsx`) são o MESMO arquivo.

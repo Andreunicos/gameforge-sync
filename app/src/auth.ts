@@ -1,16 +1,12 @@
 import { GoogleAuthProvider, signInWithCredential, signInWithPopup, signOut, type User } from "firebase/auth";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { auth } from "./firebase";
-import { googleDesktopClient } from "./config";
 
 export async function login(): Promise<void> {
   if (isTauri()) {
-    // Dentro do app o Google não deixa logar na WebView: abre o navegador do sistema.
-    if (!googleDesktopClient.clientId) throw new Error("Falta o cliente OAuth de desktop em src/config.ts");
-    const idToken = await invoke<string>("google_login", {
-      clientId: googleDesktopClient.clientId,
-      clientSecret: googleDesktopClient.clientSecret,
-    });
+    // Dentro do app o Google não deixa logar na WebView: o Rust abre a página de login
+    // no navegador do sistema e devolve o id_token do Google.
+    const idToken = await invoke<string>("google_login");
     await signInWithCredential(auth, GoogleAuthProvider.credential(idToken));
   } else {
     await signInWithPopup(auth, new GoogleAuthProvider());
