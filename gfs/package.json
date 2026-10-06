@@ -1,6 +1,6 @@
 {
   "name": "gameforge-gfs",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "gfs — liga o Claude Code a uma sala do GameForge Sync",
   "type": "module",
   "bin": {
