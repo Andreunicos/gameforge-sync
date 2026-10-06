@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import type { Room } from "../types";
 import type { MirrorStatus } from "../sync/folderMirror";
@@ -8,6 +8,13 @@ import { Cmd, Modal } from "./Modals";
 const GFS_INSTALL = "npm i -g https://github.com/Andreunicos/gameforge-sync/releases/latest/download/gfs.tgz";
 
 export type OpenTool = "vscode" | "folder" | "claude";
+
+/** Abre o link no navegador do sistema (no app) ou numa aba nova (no navegador). */
+const link = (url: string) => (e: MouseEvent) => {
+  e.preventDefault();
+  if (isTauri()) void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(url));
+  else window.open(url, "_blank", "noopener");
+};
 
 export function ClaudePanel({
   room,
@@ -86,6 +93,17 @@ export function ClaudePanel({
               {busy || status?.state === "starting" ? "Preparando a pasta…" : "⚡ Ligar Claude"}
             </button>
             {status?.state === "error" && <div className="error-box">{status.error}</div>}
+            <p className="small muted" style={{ lineHeight: 1.55, marginBottom: 0 }}>
+              Precisa ter no PC (uma vez só): o{" "}
+              <a href="#" onClick={link("https://code.visualstudio.com/download")}>
+                VS Code
+              </a>{" "}
+              com a extensão{" "}
+              <a href="#" onClick={link("https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code")}>
+                Claude Code
+              </a>
+              , logada na sua própria conta do Claude. Cada pessoa usa o próprio plano.
+            </p>
           </>
         )
       ) : (

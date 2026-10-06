@@ -62,6 +62,7 @@ export class FolderMirror {
   private offRemote?: () => void;
   private saveTimer: number | undefined;
   private stopped = false;
+  private backups = 0;
   private readonly author: Author;
 
   constructor(
@@ -168,6 +169,12 @@ export class FolderMirror {
     this.scheduleSave();
   }
 
+  private async writeBackup(path: string, content: string) {
+    const f = await join(this.dir, ".gfs", "backup", ...path.split("/"));
+    await mkdir(f.slice(0, Math.max(f.lastIndexOf("\\"), f.lastIndexOf("/"))), { recursive: true });
+    await writeTextFile(f, content);
+  }
+
   private async readDisk(path: string): Promise<string | null> {
     const f = await this.abs(path);
     try {
@@ -222,10 +229,12 @@ export class FolderMirror {
             await this.setBase(f.path, { content: f.content, version: f.version });
             if (disk === null) await this.writeDisk(f.path, f.content);
           } else {
-            // Arquivo já existia na pasta sem histórico: junta sem perder nenhum lado.
-            const m = merge3("", disk, f.content, who(f.author));
+            // Pasta já tinha uma versão diferente, sem histórico: a da sala vale e a antiga
+            // vai para .gfs/backup (nada se perde, e o Claude não vê dois arquivos iguais).
+            await this.writeBackup(f.path, disk);
             await this.setBase(f.path, { content: f.content, version: f.version });
-            await this.writeDisk(f.path, m.text);
+            await this.writeDisk(f.path, f.content);
+            this.backups++;
           }
         } else if (f.version > b.version) {
           await this.onRemote(f.path, f);
@@ -234,6 +243,12 @@ export class FolderMirror {
         } else if (disk !== b.content) {
           await this.push(f.path);
         }
+      });
+    }
+    if (this.backups > 0) {
+      this.sync.onToast({
+        kind: "info",
+        text: `${this.backups} arquivo(s) da pasta eram diferentes da sala: ficou a versão da sala e a sua antiga foi guardada em .gfs/backup.`,
       });
     }
     // Arquivos novos criados na pasta com o app fechado.
