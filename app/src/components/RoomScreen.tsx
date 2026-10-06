@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { User } from "firebase/auth";
 import { go } from "../App";
 import { colorFor } from "../auth";
@@ -11,7 +12,9 @@ import { FileList } from "./FileList";
 import { EditorPane } from "./EditorPane";
 import { PreviewPane } from "./PreviewPane";
 import { ActivityFeed } from "./ActivityFeed";
-import { ClaudeModal, InviteModal, SettingsModal } from "./Modals";
+import { InviteModal, SettingsModal } from "./Modals";
+import { ClaudePanel, type OpenTool } from "./ClaudePanel";
+import { FolderMirror, type MirrorStatus } from "../sync/folderMirror";
 import { Toasts } from "./Toasts";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
@@ -94,6 +97,64 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     };
   }, [sync]);
 
+  // ── pasta do Claude (liga sozinha se já foi ligada antes nesta sala) ──
+  const mirrorRef = useRef<FolderMirror | null>(null);
+  const [mirror, setMirror] = useState<MirrorStatus | null>(null);
+  const mirrorKey = `gfs-mirror-${room.id}`;
+
+  const startMirror = useCallback(async () => {
+    if (mirrorRef.current) return;
+    const m = new FolderMirror(sync, room, authorOf(user), !readOnly, setMirror);
+    mirrorRef.current = m;
+    try {
+      await m.start();
+      try {
+        localStorage.setItem(mirrorKey, "1");
+      } catch {
+        /* sem storage: só não religa sozinho */
+      }
+    } catch (e) {
+      mirrorRef.current = null;
+      throw e;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync, readOnly]);
+
+  useEffect(() => {
+    if (!isTauri() || readOnly) return;
+    let wasOn = false;
+    try {
+      wasOn = localStorage.getItem(mirrorKey) === "1";
+    } catch {
+      /* ignora */
+    }
+    if (wasOn) void startMirror().catch(() => {});
+    return () => {
+      const m = mirrorRef.current;
+      mirrorRef.current = null;
+      void m?.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync]);
+
+  const openMirror = async (tool: OpenTool) => {
+    const dir = mirrorRef.current?.dir;
+    if (!dir) throw new Error("Ligue a pasta do Claude primeiro.");
+    await invoke("open_with", { tool, dir });
+  };
+
+  const stopMirror = async () => {
+    const m = mirrorRef.current;
+    mirrorRef.current = null;
+    await m?.stop();
+    setMirror(null);
+    try {
+      localStorage.removeItem(mirrorKey);
+    } catch {
+      /* ignora */
+    }
+  };
+
   const others = useMemo(() => state.people.filter((p) => p.uid !== user.uid), [state.people, user.uid]);
 
   return (
@@ -128,8 +189,9 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           {showPreview ? "◧ Preview" : "◻ Preview"}
         </button>
         {!readOnly && (
-          <button onClick={() => setModal("claude")} title="Como ligar o seu Claude nesta sala">
-            🤖 Conectar Claude
+          <button onClick={() => setModal("claude")} title="Ligar o seu Claude nesta sala">
+            🤖 Claude{" "}
+            {mirror?.state === "on" && <span className="dot" style={{ background: "var(--ok)", display: "inline-block" }} />}
           </button>
         )}
         {role === "owner" && (
@@ -155,7 +217,19 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}
       {modal === "settings" && <SettingsModal room={room} onClose={() => setModal(null)} />}
-      {modal === "claude" && <ClaudeModal room={room} onClose={() => setModal(null)} />}
+      {modal === "claude" && (
+        <ClaudePanel
+          room={room}
+          status={mirror}
+          onStart={async () => {
+            await startMirror();
+            await openMirror("vscode");
+          }}
+          onOpen={openMirror}
+          onStop={stopMirror}
+          onClose={() => setModal(null)}
+        />
+      )}
       <Toasts toasts={toasts} onClose={(id) => setToasts((ts) => ts.filter((t) => t.id !== id))} />
       {state.error && <Toasts toasts={[{ id: -1, kind: "error", text: state.error }]} onClose={() => {}} />}
     </div>

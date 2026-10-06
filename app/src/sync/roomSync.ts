@@ -35,6 +35,8 @@ export class RoomSync {
   private presence: PresenceChannel;
   private listeners = new Set<() => void>();
   private changeListeners = new Set<(path: string) => void>();
+  private remoteListeners = new Set<(path: string, file: RemoteFile | null) => void>();
+  private loadedWaiters: (() => void)[] = [];
   state: RoomSyncState = { files: [], loaded: false, active: null, statuses: {}, people: [], error: null };
   onToast: (t: Toast) => void = () => {};
 
@@ -52,9 +54,11 @@ export class RoomSync {
           if (ch.type === "removed") {
             this.remote.delete(f.path);
             this.sessions.get(f.path)?.onRemote(null);
+            this.remoteListeners.forEach((l) => l(f.path, null));
           } else {
             this.remote.set(f.path, f);
             this.sessions.get(f.path)?.onRemote(f);
+            this.remoteListeners.forEach((l) => l(f.path, f));
           }
           this.changeListeners.forEach((l) => l(f.path));
         }
@@ -64,6 +68,7 @@ export class RoomSync {
           active = files.find((f) => f.path === "index.html")?.path ?? files[0]?.path ?? null;
         }
         this.set({ files, loaded: true, active });
+        this.loadedWaiters.splice(0).forEach((w) => w());
       },
       (e) => this.set({ error: e.message }),
     );
@@ -93,6 +98,24 @@ export class RoomSync {
     return () => {
       this.changeListeners.delete(l);
     };
+  }
+
+  /** Cada versão nova de arquivo que chega do Firebase (null = apagado) — usado pela pasta do Claude. */
+  onRemoteFile(l: (path: string, file: RemoteFile | null) => void) {
+    this.remoteListeners.add(l);
+    return () => {
+      this.remoteListeners.delete(l);
+    };
+  }
+
+  /** Resolve quando a primeira lista de arquivos da sala chegou. */
+  whenLoaded(): Promise<void> {
+    if (this.state.loaded) return Promise.resolve();
+    return new Promise((r) => this.loadedWaiters.push(r));
+  }
+
+  remoteFiles(): RemoteFile[] {
+    return [...this.remote.values()];
   }
 
   private set(patch: Partial<RoomSyncState>) {
@@ -239,6 +262,7 @@ export class RoomSync {
     this.sessions.clear();
     this.listeners.clear();
     this.changeListeners.clear();
+    this.remoteListeners.clear();
   }
 }
 

@@ -1,6 +1,6 @@
 // Arquivos que toda sala recebe. Curtos de propósito: o Claude Code lê o CLAUDE.md
 // em toda conversa, então cada linha aqui custa token em toda tarefa.
-// (Mantenha igual a app/src/sync/templates.ts.)
+// (Mantenha igual a gfs/src/templates.ts.)
 
 export const ROOM_CLAUDE_MD = `# Sala do GameForge Sync — regras para o Claude
 

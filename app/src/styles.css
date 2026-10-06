@@ -211,3 +211,8 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-si
 .cmd code { flex: 1; background: none; padding: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; color: var(--accent-2); }
 .modal { max-height: calc(100vh - 40px); overflow: auto; }
 .modal:has(.steps) { width: min(620px, 100%); }
+.update-btn { padding-left: 0; color: var(--muted); }
+.update-btn:hover:not(:disabled) { color: var(--text); background: transparent; }
+.mirror-on { display: flex; gap: 10px; align-items: flex-start; background: #14261f; border: 1px solid #245a45; border-radius: 10px; padding: 10px 12px; }
+.mirror-on .dot { margin-top: 6px; }
+.modal:has(.mirror-on), .modal:has(details) { width: min(620px, 100%); }
