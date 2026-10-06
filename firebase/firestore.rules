@@ -5,8 +5,16 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Só estas contas Google usam o app. Mudou a lista? Atualize também
+    // database.rules.json e ALLOWED_EMAILS em app/src/config.ts, e faça o deploy.
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in [
+          'andreluizvillanova123@gmail.com',
+          'kaue.bimok@gmail.com',
+          'jonatas3dmodel@gmail.com'
+        ];
     }
 
     function roomData(roomId) {

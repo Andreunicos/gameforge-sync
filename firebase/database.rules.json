@@ -2,9 +2,9 @@
   "rules": {
     "presence": {
       "$room": {
-        ".read": "auth != null",
+        ".read": "auth != null && auth.token.email_verified == true && (auth.token.email == 'andreluizvillanova123@gmail.com' || auth.token.email == 'kaue.bimok@gmail.com' || auth.token.email == 'jonatas3dmodel@gmail.com')",
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && auth.token.email_verified == true && (auth.token.email == 'andreluizvillanova123@gmail.com' || auth.token.email == 'kaue.bimok@gmail.com' || auth.token.email == 'jonatas3dmodel@gmail.com')",
           ".validate": "newData.hasChildren(['name', 'color']) || !newData.exists()"
         }
       }

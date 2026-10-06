@@ -13,7 +13,11 @@ export function LoginScreen() {
     try {
       await login();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("configuration-not-found") || msg.includes("operation-not-allowed"))
+        setError("O login Google ainda não está ligado no Firebase (Authentication → Método de login → Google → Ativar).");
+      else if (msg.includes("popup-closed-by-user") || msg.includes("cancelled-popup-request")) setError(null);
+      else setError(msg);
     } finally {
       setBusy(false);
     }

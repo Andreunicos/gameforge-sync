@@ -6,6 +6,25 @@ import { joinWithCode } from "./rooms";
 import { LoginScreen } from "./components/LoginScreen";
 import { RoomsScreen } from "./components/RoomsScreen";
 import { RoomScreen } from "./components/RoomScreen";
+import { Brand } from "./components/Brand";
+import { ALLOWED_EMAILS } from "./config";
+import { logout } from "./auth";
+
+function NotAllowed({ email }: { email: string | null }) {
+  return (
+    <div className="center-screen">
+      <div className="card">
+        <Brand />
+        <div className="error-box">
+          A conta <b>{email ?? "sem e-mail"}</b> não tem acesso ao GameForge Sync. Peça ao dono para incluir seu e-mail.
+        </div>
+        <button style={{ marginTop: 14 }} onClick={() => void logout()}>
+          Entrar com outra conta
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function Home() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -27,6 +46,7 @@ export function Home() {
 
   if (user === undefined) return <div className="center-screen muted">Carregando…</div>;
   if (!user) return <LoginScreen />;
+  if (!ALLOWED_EMAILS.includes(user.email ?? "")) return <NotAllowed email={user.email} />;
   if (route.name === "room") return <RoomScreen key={route.id} user={user} roomId={route.id} />;
   if (route.name === "join") return <div className="center-screen muted">Entrando na sala…</div>;
   return <RoomsScreen user={user} initialError={joinError} />;
