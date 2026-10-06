@@ -1,0 +1,36 @@
+# Mantém o cache do Rust aquecido na main: quando sair uma tag de release,
+# o build reaproveita as dependências já compiladas em vez de começar do zero.
+name: Rust cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/src-tauri/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+jobs:
+  warm:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+          shared-key: tauri-windows
+
+      - name: Compilar (sem instalador)
+        working-directory: app
+        run: |
+          npm ci
+          npx tauri build --no-bundle

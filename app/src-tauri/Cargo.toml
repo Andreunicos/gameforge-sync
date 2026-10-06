@@ -31,8 +31,8 @@ tauri-plugin-updater = "2"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
+codegen-units = 16
+lto = false
+opt-level = "s"
 panic = "abort"
 strip = true

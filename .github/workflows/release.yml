@@ -27,9 +27,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Cache compartilhado: as tags leem o cache que o rust-cache.yml grava na main
+      # (tag nova não enxerga cache de outra tag, por isso cada build começava do zero).
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri -> target
+          shared-key: tauri-windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Instalar dependências
         working-directory: app

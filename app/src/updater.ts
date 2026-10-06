@@ -87,3 +87,42 @@ export async function checkAndInstall(): Promise<void> {
     set({ phase: "error", error: e instanceof Error ? e.message : String(e) });
   }
 }
+
+// ── tela publicada no site (atualiza em ~1 min, sem reinstalar) ─────────────
+
+let webUpdate = false;
+const webListeners = new Set<() => void>();
+export const webUpdateReady = () => webUpdate;
+export function onWebUpdate(l: () => void) {
+  webListeners.add(l);
+  return () => {
+    webListeners.delete(l);
+  };
+}
+
+/**
+ * Quando a tela vem do site (/app/), confere a cada 3 min se saiu publicação nova.
+ * Fora de uma sala recarrega sozinho; dentro de uma sala só avisa (para não cortar ninguém editando).
+ */
+export function startWebCheck() {
+  if (__BUILD_ID__ === "dev" || !location.pathname.startsWith("/app/") || webUpdate) return;
+  const check = async () => {
+    try {
+      const res = await fetch("/app/version.json", { cache: "no-store" });
+      const { build } = (await res.json()) as { build?: string };
+      if (!build || build === __BUILD_ID__) return;
+      if (!location.hash.startsWith("#/room/")) {
+        location.reload();
+        return;
+      }
+      webUpdate = true;
+      webListeners.forEach((l) => l());
+      window.clearInterval(timerWeb);
+    } catch {
+      /* sem internet: tenta depois */
+    }
+  };
+  const timerWeb = window.setInterval(check, 3 * 60_000);
+  window.addEventListener("focus", () => void check());
+  void check();
+}

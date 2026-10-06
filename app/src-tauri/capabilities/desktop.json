@@ -1,9 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "Permissões só do PC: autoatualização e a pasta sincronizada do Claude (~/GameForge)",
-  "platforms": ["windows", "macOS", "linux"],
-  "windows": ["main"],
+  "description": "Permissões só do PC: autoatualização e a pasta do Claude (cada pasta de sala é liberada pelo comando room_dir)",
+  "platforms": [
+    "windows",
+    "macOS",
+    "linux"
+  ],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "updater:default",
     "fs:allow-read-text-file",
@@ -17,7 +23,20 @@
     "fs:allow-unwatch",
     {
       "identifier": "fs:scope",
-      "allow": [{ "path": "$HOME/GameForge" }, { "path": "$HOME/GameForge/**" }]
+      "allow": [
+        {
+          "path": "$HOME/GameForge"
+        },
+        {
+          "path": "$HOME/GameForge/**"
+        }
+      ]
     }
-  ]
+  ],
+  "remote": {
+    "urls": [
+      "https://gameforge-sync.web.app/app/*",
+      "https://gameforge-sync.web.app/app"
+    ]
+  }
 }

@@ -13,6 +13,8 @@ export default defineConfig(() => ({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Identifica cada publicação da tela no site (o app compara com /app/version.json).
+    __BUILD_ID__: JSON.stringify(process.env.GFS_BUILD_ID ?? "dev"),
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

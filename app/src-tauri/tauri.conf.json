@@ -16,7 +16,8 @@
         "width": 1400,
         "height": 860,
         "minWidth": 900,
-        "minHeight": 560
+        "minHeight": 560,
+        "url": "https://gameforge-sync.web.app/app/"
       }
     ],
     "security": {
@@ -25,7 +26,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "createUpdaterArtifacts": true,
     "publisher": "BringmeStudio",
     "shortDescription": "Editor colaborativo de jogos HTML5",

@@ -9,3 +9,4 @@ app/src-tauri/gen/
 secrets/
 .DS_Store
 *.tgz
+hosting/app/
