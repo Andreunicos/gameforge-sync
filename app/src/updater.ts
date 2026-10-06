@@ -2,7 +2,7 @@
 // e também pelo botão "Verificar atualização". Achou versão nova: baixa, instala e reabre.
 import { isTauri } from "@tauri-apps/api/core";
 
-export type UpdatePhase = "idle" | "checking" | "latest" | "downloading" | "installing" | "error";
+export type UpdatePhase = "idle" | "checking" | "latest" | "available" | "downloading" | "installing" | "error";
 export interface UpdateState {
   phase: UpdatePhase;
   version?: string;
@@ -28,12 +28,39 @@ export function onUpdate(l: () => void) {
 
 export const canUpdate = () => isTauri();
 
+type Update = Awaited<ReturnType<typeof import("@tauri-apps/plugin-updater").check>>;
+let pending: Update = null;
+let timer: number | undefined;
+
+/**
+ * Com o app aberto, confere a cada 30 min. Não reinicia no meio do trabalho:
+ * só mostra o aviso "Atualizar agora" (ao abrir o app a instalação é automática).
+ */
+export function startPeriodicCheck() {
+  if (!isTauri() || timer) return;
+  timer = window.setInterval(async () => {
+    if (state.phase !== "idle" && state.phase !== "latest" && state.phase !== "error") return;
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const u = await check();
+      if (u) {
+        pending = u;
+        set({ phase: "available", version: u.version });
+      }
+    } catch {
+      /* sem internet etc.: tenta na próxima */
+    }
+  }, 30 * 60_000);
+}
+
 export async function checkAndInstall(): Promise<void> {
   if (!isTauri() || state.phase === "checking" || state.phase === "downloading" || state.phase === "installing") return;
+  startPeriodicCheck();
   set({ phase: "checking" });
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
-    const update = await check();
+    const update = pending ?? (await check());
+    pending = null;
     if (!update) {
       set({ phase: "latest" });
       return;

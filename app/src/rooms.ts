@@ -5,6 +5,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -21,6 +22,38 @@ import type { ActivityEvent, Author, Role, Room } from "./types";
 
 export function authorOf(user: User): Author {
   return { uid: user.uid, name: displayName(user), kind: "human" };
+}
+
+/** Grava o perfil (nome/e-mail) para o dono da sala conseguir adicionar a pessoa sem código. */
+export async function saveProfile(user: User) {
+  await setDoc(
+    doc(db, "users", user.uid),
+    { name: displayName(user), email: user.email ?? "", lastSeen: serverTimestamp() },
+    { merge: true },
+  );
+  countWrite();
+}
+
+export interface Profile {
+  uid: string;
+  name: string;
+  email: string;
+}
+
+export async function listProfiles(): Promise<Profile[]> {
+  const snap = await getDocs(collection(db, "users"));
+  return snap.docs.map((d) => ({ uid: d.id, ...(d.data() as { name: string; email: string }) }));
+}
+
+/** Dono adiciona alguém direto (a sala aparece sozinha na lista da pessoa). */
+export async function addMember(owner: User, roomId: string, p: Profile, role: Role = "editor") {
+  await updateDoc(doc(db, "rooms", roomId), {
+    memberIds: arrayUnion(p.uid),
+    [`roles.${p.uid}`]: role,
+    [`names.${p.uid}`]: p.name,
+  });
+  countWrite();
+  await logActivity(roomId, authorOf(owner), { kind: "join", summary: `adicionou ${p.name} à sala` });
 }
 
 export function watchMyRooms(uid: string, cb: (rooms: Room[]) => void, onError: (e: Error) => void) {

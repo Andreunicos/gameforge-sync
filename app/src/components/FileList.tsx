@@ -156,6 +156,13 @@ export function FileList({
               {peopleIn(f.path).map((p) => (
                 <span key={p.uid} className="dot" style={{ background: p.color }} title={`${p.name} está aqui`} />
               ))}
+              {state.people
+                .filter((p) => p.claudeOn && p.claudeFile === f.path)
+                .map((p) => (
+                  <span key={"c" + p.uid} className="small" title={`Claude de ${p.name} mexeu aqui por último`}>
+                    🤖
+                  </span>
+                ))}
               {!readOnly && (
                 <button
                   className="ghost del"

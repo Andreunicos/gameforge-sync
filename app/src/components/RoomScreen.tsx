@@ -97,7 +97,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     };
   }, [sync]);
 
-  // ── pasta do Claude (liga sozinha se já foi ligada antes nesta sala) ──
+  // ── pasta do Claude: ligada por padrão no app de PC (só fica desligada se a pessoa desligar) ──
   const mirrorRef = useRef<FolderMirror | null>(null);
   const [mirror, setMirror] = useState<MirrorStatus | null>(null);
   const mirrorKey = `gfs-mirror-${room.id}`;
@@ -122,13 +122,13 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
 
   useEffect(() => {
     if (!isTauri() || readOnly) return;
-    let wasOn = false;
+    let turnedOff = false;
     try {
-      wasOn = localStorage.getItem(mirrorKey) === "1";
+      turnedOff = localStorage.getItem(mirrorKey) === "0";
     } catch {
       /* ignora */
     }
-    if (wasOn) void startMirror().catch(() => {});
+    if (!turnedOff) void startMirror().catch(() => {});
     return () => {
       const m = mirrorRef.current;
       mirrorRef.current = null;
@@ -149,7 +149,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     await m?.stop();
     setMirror(null);
     try {
-      localStorage.removeItem(mirrorKey);
+      localStorage.setItem(mirrorKey, "0");
     } catch {
       /* ignora */
     }
@@ -175,6 +175,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
               title={`${p.name}${p.uid === user.uid ? " (você)" : ""}${p.file ? ` — em ${p.file}` : ""}`}
             >
               {p.name.slice(0, 1).toUpperCase()}
+              {p.claudeOn && (
+                <span className="claude-badge" title={`Claude de ${p.name} ligado${p.claudeFile ? ` — mexeu em ${p.claudeFile}` : ""}`}>
+                  🤖
+                </span>
+              )}
             </span>
           ))}
         </div>

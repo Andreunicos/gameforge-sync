@@ -94,6 +94,7 @@ export class FolderMirror {
         return this.dir;
       }
       this.unwatch = unwatch;
+      this.sync.setClaude(true);
       this.status("pasta pronta");
       return this.dir;
     } catch (e) {
@@ -104,6 +105,7 @@ export class FolderMirror {
 
   async stop() {
     this.stopped = true;
+    if (this.unwatch) this.sync.setClaude(false);
     this.offRemote?.();
     this.unwatch?.();
     this.timers.forEach((t) => window.clearTimeout(t));
@@ -319,8 +321,15 @@ export class FolderMirror {
   private async push(path: string) {
     if (!this.canEdit || this.stopped) return;
     const disk = await this.readDisk(path);
-    if (disk === null) return; // apagado na pasta: o Claude não apaga arquivo da sala
     const b = this.base.get(path);
+    if (disk === null) {
+      // Apagado na pasta: o Claude não apaga arquivo da sala, então volta na hora.
+      if (b && this.sync.remoteFiles().some((f) => f.path === path)) {
+        await this.writeDisk(path, b.content);
+        this.sync.onToast({ kind: "info", text: `${path} foi apagado na pasta do Claude e voltou: só o dono apaga arquivos da sala (✕ na lista).` });
+      }
+      return;
+    }
     if (b && disk === b.content) return;
     if (hasConflictMarkers(disk)) return;
     if (new Blob([disk]).size > MAX_FILE_BYTES) {
@@ -342,6 +351,7 @@ export class FolderMirror {
       countWrite();
       await this.setBase(path, { content: disk, version });
       this.status(`↑ ${path} v${version}`);
+      this.sync.setClaude(true, path);
       await this.noteActivity(path, baseVersion === 0);
     } catch (e) {
       if (!(e instanceof Stale)) throw e;

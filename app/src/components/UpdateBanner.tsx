@@ -9,6 +9,19 @@ export function UpdateBanner() {
     void checkAndInstall();
   }, []);
 
+  if (s.phase === "available") {
+    return (
+      <div className="update-banner">
+        <span>
+          🎉 Saiu a versão <b>{s.version}</b>
+        </span>
+        <span className="grow" />
+        <button className="primary" onClick={() => void checkAndInstall()}>
+          Atualizar agora
+        </button>
+      </div>
+    );
+  }
   if (s.phase !== "downloading" && s.phase !== "installing") return null;
   return (
     <div className="update-banner">

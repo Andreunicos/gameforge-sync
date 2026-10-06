@@ -6,6 +6,7 @@ const LABEL = {
   idle: "Verificar atualização",
   checking: "Verificando…",
   latest: "✓ Você está na versão mais nova",
+  available: "Atualizar agora",
   downloading: "Baixando…",
   installing: "Instalando…",
   error: "Tentar de novo",

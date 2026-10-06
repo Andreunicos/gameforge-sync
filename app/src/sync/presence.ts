@@ -43,6 +43,11 @@ export class PresenceChannel {
     this.pending = null;
   }
 
+  /** Liga/desliga o selo do Claude (pasta ligada) e o arquivo em que ele está mexendo. */
+  setClaude(on: boolean, file: string | null = null) {
+    void update(this.myRef, { claudeOn: on, claudeFile: file });
+  }
+
   leave() {
     window.clearTimeout(this.timer);
     this.unsub();

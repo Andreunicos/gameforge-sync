@@ -52,4 +52,7 @@ export interface Presence {
   line: number;
   col: number;
   at: number;
+  /** Pasta do Claude ligada no app desta pessoa, e o último arquivo que o Claude mexeu. */
+  claudeOn?: boolean;
+  claudeFile?: string | null;
 }

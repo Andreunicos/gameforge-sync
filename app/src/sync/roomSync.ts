@@ -118,6 +118,11 @@ export class RoomSync {
     return [...this.remote.values()];
   }
 
+  /** A pasta do Claude avisa que está ligada e onde ele mexeu por último (vira 🤖 para todos). */
+  setClaude(on: boolean, file: string | null = null) {
+    this.presence.setClaude(on, file);
+  }
+
   private set(patch: Partial<RoomSyncState>) {
     this.state = { ...this.state, ...patch };
     this.listeners.forEach((l) => l());

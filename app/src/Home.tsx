@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { auth } from "./firebase";
 import { go, useRoute } from "./App";
-import { joinWithCode } from "./rooms";
+import { joinWithCode, saveProfile } from "./rooms";
 import { LoginScreen } from "./components/LoginScreen";
 import { RoomsScreen } from "./components/RoomsScreen";
 import { RoomScreen } from "./components/RoomScreen";
@@ -32,6 +32,11 @@ export function Home() {
   const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+  // Perfil para o dono de uma sala conseguir adicionar esta pessoa sem código.
+  useEffect(() => {
+    if (user && ALLOWED_EMAILS.includes(user.email ?? "")) void saveProfile(user).catch(() => {});
+  }, [user]);
 
   // Link de convite: #/join/CODIGO
   useEffect(() => {

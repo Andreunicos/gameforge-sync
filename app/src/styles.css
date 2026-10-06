@@ -216,3 +216,7 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-si
 .mirror-on { display: flex; gap: 10px; align-items: flex-start; background: #14261f; border: 1px solid #245a45; border-radius: 10px; padding: 10px 12px; }
 .mirror-on .dot { margin-top: 6px; }
 .modal:has(.mirror-on), .modal:has(details) { width: min(620px, 100%); }
+.claude-badge { position: absolute; right: -7px; bottom: -6px; font-size: 12px; line-height: 1; filter: drop-shadow(0 1px 1px #000); }
+.people-list { display: flex; flex-direction: column; gap: 6px; }
+.person { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+button.small { font-size: 12px; padding: 4px 10px; }

@@ -128,6 +128,16 @@ service cloud.firestore {
       }
     }
 
+    // ── perfis: cada um grava o próprio (nome/e-mail) ao entrar; o dono usa a lista para adicionar gente ──
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 80;
+    }
+
     // ── convites: quem sabe o código consegue ler (mas ninguém consegue listar) ──
     match /invites/{code} {
       allow get: if signedIn();
