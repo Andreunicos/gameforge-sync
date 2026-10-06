@@ -11,7 +11,7 @@ import { FileList } from "./FileList";
 import { EditorPane } from "./EditorPane";
 import { PreviewPane } from "./PreviewPane";
 import { ActivityFeed } from "./ActivityFeed";
-import { InviteModal, SettingsModal } from "./Modals";
+import { ClaudeModal, InviteModal, SettingsModal } from "./Modals";
 import { Toasts } from "./Toasts";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
@@ -82,7 +82,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | null>(null);
   const [showPreview, setShowPreview] = useState(true);
   const writes = useSyncExternalStore(onWrites, writesToday);
 
@@ -127,10 +127,15 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
           {showPreview ? "◧ Preview" : "◻ Preview"}
         </button>
+        {!readOnly && (
+          <button onClick={() => setModal("claude")} title="Como ligar o seu Claude nesta sala">
+            🤖 Conectar Claude
+          </button>
+        )}
         {role === "owner" && (
           <>
-            <button onClick={() => setModal("settings")} title="Configurações da sala">
-              ⚙
+            <button className="ghost" onClick={() => setModal("settings")} title="Configurações da sala">
+              Ajustes
             </button>
             <button className="primary" onClick={() => setModal("invite")}>
               Convidar
@@ -150,6 +155,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}
       {modal === "settings" && <SettingsModal room={room} onClose={() => setModal(null)} />}
+      {modal === "claude" && <ClaudeModal room={room} onClose={() => setModal(null)} />}
       <Toasts toasts={toasts} onClose={(id) => setToasts((ts) => ts.filter((t) => t.id !== id))} />
       {state.error && <Toasts toasts={[{ id: -1, kind: "error", text: state.error }]} onClose={() => {}} />}
     </div>

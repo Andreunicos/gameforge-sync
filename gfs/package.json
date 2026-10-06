@@ -1,0 +1,27 @@
+{
+  "name": "gameforge-gfs",
+  "version": "0.1.1",
+  "description": "gfs — liga o Claude Code a uma sala do GameForge Sync",
+  "type": "module",
+  "bin": {
+    "gfs": "dist/gfs.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "esbuild": "^0.28.2",
+    "node-diff3": "^3.2.1",
+    "typescript": "^7.0.2"
+  }
+}

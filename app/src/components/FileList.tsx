@@ -30,8 +30,16 @@ export function FileList({
   const toast = (text: string, kind: "info" | "warn" | "error" = "error") => sync.onToast({ kind, text });
 
   const newFile = async () => {
-    const path = prompt("Nome do arquivo (pode ter pasta, ex.: js/player.js):", state.files.length ? "" : "index.html");
+    const path = prompt("Nome do arquivo novo (ex.: index.html ou js/player.js):", state.files.length ? "" : "index.html");
     if (!path) return;
+    if (/^[a-z]:[\\/]/i.test(path.trim()) || path.trim().startsWith("\\\\") || path.includes("\\")) {
+      toast("Isso é um caminho do seu PC, não um nome de arquivo. Para trazer um jogo que você já tem, use o botão “Importar pasta”.", "warn");
+      return;
+    }
+    if (!/\.[a-z0-9]+$/i.test(path.trim())) {
+      toast("Coloque a extensão no nome (ex.: player.js, index.html, style.css).", "warn");
+      return;
+    }
     try {
       await sync.createFile(path, path.endsWith(".html") && state.files.length === 0 ? STARTER_HTML : "");
     } catch (e) {
@@ -63,7 +71,10 @@ export function FileList({
     setImporting(`0/${files.length}`);
     try {
       const data = await Promise.all(
-        files.map(async (f) => ({ path: f.webkitRelativePath.split("/").slice(1).join("/"), content: await f.text() })),
+        files.map(async (f) => ({
+          path: f.webkitRelativePath.split("/").slice(1).join("/"),
+          content: (await f.text()).replace(/\r\n/g, "\n"),
+        })),
       );
       const skipped = await sync.importFiles(data, (n) => setImporting(`${n}/${files.length}`));
       if (skipped.length) toast(`Ficaram de fora (maiores que 900 KB): ${skipped.join(", ")}`, "warn");
@@ -84,11 +95,11 @@ export function FileList({
         <span className="title">Arquivos</span>
         {!readOnly && (
           <>
-            <button className="ghost icon" title="Novo arquivo" onClick={() => void newFile()}>
-              ＋
+            <button className="ghost small" title="Criar um arquivo novo" onClick={() => void newFile()}>
+              ＋ Arquivo
             </button>
-            <button className="ghost icon" title="Importar pasta do jogo (só código)" onClick={() => folderInput.current?.click()}>
-              ⇪
+            <button className="ghost small" title="Trazer o código de um jogo que já existe no seu PC" onClick={() => folderInput.current?.click()}>
+              📁 Importar
             </button>
             <input
               ref={folderInput}
@@ -106,8 +117,19 @@ export function FileList({
       <div className="files">
         {!state.loaded && <div className="small muted" style={{ padding: 8 }}>Carregando…</div>}
         {state.loaded && state.files.length === 0 && (
-          <div className="small muted" style={{ padding: 8, lineHeight: 1.5 }}>
-            Sala vazia. Crie um <b>index.html</b> com ＋ ou importe a pasta do jogo com ⇪.
+          <div className="empty-files">
+            <p>Sala vazia. Como quer começar?</p>
+            {!readOnly && (
+              <>
+                <button className="primary" onClick={() => folderInput.current?.click()}>
+                  📁 Importar pasta de um jogo
+                </button>
+                <span className="small muted">Escolha a pasta do jogo no PC. Vai só o código (html, js, css, json).</span>
+                <button onClick={() => void sync.createFile("index.html", STARTER_HTML).catch((e: Error) => toast(e.message))}>
+                  ✨ Começar do zero
+                </button>
+              </>
+            )}
           </div>
         )}
         {state.files.map((f) => {

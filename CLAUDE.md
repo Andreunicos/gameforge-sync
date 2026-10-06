@@ -19,6 +19,8 @@ Estrutura do repo (`Andreunicos/gameforge-sync`, público):
 - Só 3 e-mails autorizados (regras + ALLOWED_EMAILS). Atualização é automática ao abrir (UpdateBanner).
 - Chave de assinatura do updater: `C:\Users\BIGHOUSE\.tauri\gameforge.key` (sem senha). Precisa estar no secret `TAURI_SIGNING_PRIVATE_KEY` do repo e em backup.
 - Convite = documento `invites/{código}`; entrar = update na sala validado pelas regras (`isJoining`).
+- `gfs/` — CLI do Claude (Fase 2). REST puro do Firestore/Identity Toolkit (sem SDK), bundle único `dist/gfs.mjs` via `node build.mjs`. Login pela mesma página web.app; sessão em `~/.gfs/auth.json` (refresh token). Pasta clonada guarda `.gfs/state.json` + `.gfs/base/` (base do merge). Comandos: login, rooms, clone, status, pull, push. claim/say/checkpoint = Fase 3. `gfs/src/merge.ts` é cópia de `app/src/sync/merge.ts`. Toda sala ganha CLAUDE.md/GAME.md da sala (`gfs/src/templates.ts`) no primeiro clone.
+- Release: o workflow anexa `gfs.tgz` em toda release; instalar com `npm i -g https://github.com/Andreunicos/gameforge-sync/releases/latest/download/gfs.tgz`. Versão do gfs = versão do app (subir as duas juntas).
 - Cuidado no Windows: arquivos que só diferem em maiúsculas (ex.: `main.tsx`/`Main.tsx`) são o MESMO arquivo.
 
 ## Quem e o quê

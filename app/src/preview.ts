@@ -55,7 +55,7 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
   const entry = findEntry(input.paths);
   if (!entry) {
     return {
-      html: `<!doctype html><body style="font-family:system-ui;color:#9a8fb0;background:#120f19;display:grid;place-items:center;height:100vh;margin:0">Crie um <b style="color:#ffb26b;margin:0 .3em">index.html</b> para ver o jogo aqui.</body>`,
+      html: `<!doctype html><body style="font-family:system-ui;color:#9a8fb0;background:#120f19;display:grid;place-items:center;height:100vh;margin:0"><p style="text-align:center;padding:20px">O jogo aparece aqui quando a sala tiver um <b style="color:#ffb26b">index.html</b>.</p></body>`,
       warnings,
     };
   }

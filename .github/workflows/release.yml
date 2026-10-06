@@ -49,6 +49,36 @@ jobs:
             Se o Windows mostrar "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo** (o app ainda não tem certificado pago de assinatura).
 
             Quem já tem o app instalado recebe esta versão sozinho ao abrir.
+
+            **Claude:** instale ou atualize a ponte do Claude com `npm i -g https://github.com/Andreunicos/gameforge-sync/releases/latest/download/gfs.tgz` (no app: botão 🤖 Conectar Claude).
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+
+  # A ferramenta do Claude (gfs) vai junto em toda release:
+  #   npm i -g https://github.com/Andreunicos/gameforge-sync/releases/latest/download/gfs.tgz
+  gfs:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gfs/package-lock.json
+
+      - name: Empacotar o gfs
+        working-directory: gfs
+        run: |
+          npm ci
+          npm run build
+          node dist/gfs.mjs --version
+          mv "$(npm pack --silent)" gfs.tgz
+
+      - name: Anexar à release
+        working-directory: gfs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" gfs.tgz --clobber

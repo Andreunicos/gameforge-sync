@@ -69,6 +69,82 @@ export function InviteModal({ user, room, onClose }: { user: User; room: Room; o
   );
 }
 
+const GFS_INSTALL = "npm i -g https://github.com/Andreunicos/gameforge-sync/releases/latest/download/gfs.tgz";
+
+/** Mesmo nome de pasta que o `gfs clone` cria. */
+function slug(name: string) {
+  return (
+    name
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "sala"
+  );
+}
+
+function Cmd({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="cmd">
+      <code>{text}</code>
+      <button
+        className="ghost small"
+        onClick={() => {
+          void navigator.clipboard.writeText(text);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? "✓" : "copiar"}
+      </button>
+    </div>
+  );
+}
+
+export function ClaudeModal({ room, onClose }: { room: Room; onClose: () => void }) {
+  const folder = slug(room.name);
+  return (
+    <Modal title="🤖 Conectar o seu Claude a esta sala" onClose={onClose}>
+      <p className="muted small" style={{ marginTop: 0, lineHeight: 1.55 }}>
+        O Claude não mexe aqui dentro do app. Ele trabalha no <b>Claude Code</b>, numa pasta do seu PC que é uma cópia da sala, e
+        no fim de cada tarefa manda <b>só o que mudou</b> com <code>gfs push</code>. Aqui no app você vê as mudanças chegarem
+        como “Claude de {"<"}seu nome{">"}”.
+      </p>
+      <ol className="steps">
+        <li>
+          Instalar o <code>gfs</code> (só uma vez por PC, precisa do Node.js):
+          <Cmd text={GFS_INSTALL} />
+        </li>
+        <li>
+          Entrar com a sua conta Google (só uma vez):
+          <Cmd text="gfs login" />
+        </li>
+        <li>
+          Baixar esta sala para uma pasta:
+          <Cmd text={`gfs clone ${room.id}`} />
+        </li>
+        <li>
+          Abrir o Claude Code nessa pasta:
+          <Cmd text={`cd ${folder} && claude`} />
+          <span className="small muted">Ou abra a pasta “{folder}” no VS Code e use o Claude de lá.</span>
+        </li>
+        <li>
+          Pedir normalmente, ex.: <i>“deixa o pulo do personagem mais alto”</i>. O <code>CLAUDE.md</code> da sala ensina o Claude a
+          rodar <code>gfs status</code> antes e <code>gfs push</code> no fim.
+        </li>
+      </ol>
+      <div className="note-box small">
+        <b>Token:</b> o app não gasta token nenhum. Cada pessoa usa o próprio plano do Claude, e os comandos do gfs respondem com
+        2 a 10 linhas. O que gasta é o trabalho em si (ler e editar código), igual a usar o Claude Code em qualquer projeto.
+      </div>
+      <div className="actions">
+        <button onClick={onClose}>Fechar</button>
+      </div>
+    </Modal>
+  );
+}
+
 export function SettingsModal({ room, onClose }: { room: Room; onClose: () => void }) {
   const [name, setName] = useState(room.name);
   const [assetsBase, setAssetsBase] = useState(room.assetsBase);
