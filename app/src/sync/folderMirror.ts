@@ -1,11 +1,12 @@
-// Pasta do Claude: espelha a sala em ~/GameForge/<sala> enquanto o app está aberto.
+// Pasta do Claude: espelha a sala em ~/<sala> (pasta do usuário) enquanto o app está aberto.
 // O Claude Code edita os arquivos normalmente; o que ele salva sobe para a sala em segundos
 // (como "Claude de <nome>") e o que os outros mudam é escrito na pasta. Sem comandos.
 //
 // Usa o mesmo formato do gfs (.gfs/state.json + .gfs/base/), então o gfs funciona na mesma pasta
 // quando o app estiver fechado.
 import { exists, mkdir, readDir, readTextFile, remove, watch, writeTextFile, type UnwatchFn } from "@tauri-apps/plugin-fs";
-import { homeDir, join } from "@tauri-apps/api/path";
+import { join } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
 import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { logActivity } from "../rooms";
@@ -113,20 +114,12 @@ export class FolderMirror {
     await this.saveState();
   }
 
-  /** ~/GameForge/<nome-da-sala>; se já existir de outra sala, acrescenta o id. */
-  private async pickDir(): Promise<string> {
-    const root = await join(await homeDir(), "GameForge");
-    const plain = await join(root, roomSlug(this.room.name));
-    const stateFile = await join(plain, ".gfs", "state.json");
-    if (!(await exists(plain))) return plain;
-    if (!(await exists(stateFile))) {
-      const entries = await readDir(plain);
-      if (entries.length === 0) return plain;
-    } else {
-      const st = JSON.parse(await readTextFile(stateFile)) as { roomId?: string };
-      if (st.roomId === this.room.id) return plain;
-    }
-    return join(root, `${roomSlug(this.room.name)}-${this.room.id.slice(0, 6).toLowerCase()}`);
+  /**
+   * Pasta da sala direto na pasta do usuário (ex.: C:UsersAndrégames). Quem escolhe é o
+   * Rust: se o nome já existir com outra coisa dentro (ex.: "documents"), usa nome-<id>.
+   */
+  private pickDir(): Promise<string> {
+    return invoke<string>("room_dir", { slug: roomSlug(this.room.name), roomId: this.room.id });
   }
 
   // ── estado em disco (formato do gfs) ───────────────────────────────────

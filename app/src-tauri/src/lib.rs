@@ -12,7 +12,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
-        .invoke_handler(tauri::generate_handler![google::google_login, launch::open_with])
+        .invoke_handler(tauri::generate_handler![google::google_login, launch::open_with, launch::room_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
