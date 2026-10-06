@@ -1,13 +1,13 @@
 // Config pública do Firebase (vai no app mesmo; quem protege os dados são as regras do Firebase).
 // Console do Firebase → ⚙ Configurações do projeto → Seus apps → app Web.
 export const firebaseConfig = {
-  apiKey: "COLE_AQUI",
-  authDomain: "",
-  databaseURL: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
+  apiKey: "AIzaSyBuFsgekAZdraWUeAx0zpEJQwGi5AGRnks",
+  authDomain: "gameforge-sync.firebaseapp.com",
+  databaseURL: "https://gameforge-sync-default-rtdb.firebaseio.com",
+  projectId: "gameforge-sync",
+  storageBucket: "gameforge-sync.firebasestorage.app",
+  messagingSenderId: "763579522878",
+  appId: "1:763579522878:web:6dca74b5cc9235ccfa566f",
 };
 
 // Cliente OAuth do tipo "App para computador" (Google Cloud → APIs e serviços → Credenciais).
