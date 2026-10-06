@@ -35,8 +35,7 @@
   ],
   "remote": {
     "urls": [
-      "https://gameforge-sync.web.app/app/*",
-      "https://gameforge-sync.web.app/app"
+      "https://gameforge-sync.web.app"
     ]
   }
 }
