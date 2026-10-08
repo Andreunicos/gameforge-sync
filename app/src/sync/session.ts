@@ -2,6 +2,7 @@ import { Annotation, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
+import { addHistory } from "../history";
 import { MAX_FILE_BYTES, SAVE_DEBOUNCE_MS } from "../config";
 import { countWrite } from "../usage";
 import type { Author, RemoteFile } from "../types";
@@ -194,8 +195,9 @@ export class FileSession {
         const current = snap.exists() ? (snap.data().version as number) : 0;
         if (current !== baseVersion) throw new StaleVersion();
         tx.set(ref, { path: this.path, content, version, author: this.hooks.author, updatedAt: serverTimestamp() });
+        addHistory(tx, this.hooks.roomId, this.path, version, content, snap.exists() ? (snap.data().content as string) : null, this.hooks.author);
       });
-      countWrite();
+      countWrite(2);
       if (this.base.version < version) this.base = { content, version };
       this.hooks.onSaved(this.path, baseVersion === 0);
       if (!this.destroyed) this.setStatus(this.dirty ? "dirty" : "saved");

@@ -1,9 +1,23 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { buildPreview, findEntry } from "../preview";
 import type { RoomSync } from "../sync/roomSync";
 import type { Room } from "../types";
 
 type Device = "free" | "phone" | "landscape";
+
+/** Proporção de um celular moderno (altura ÷ largura em pé). */
+const PHONE_RATIO = 19.5 / 9;
+const FRAME_GAP = 28; // espaço em volta da moldura do celular
+
+/** Maior tamanho de celular que cabe no palco, mantendo a proporção. */
+function phoneSize(device: Device, w: number, h: number) {
+  if (device === "free") return null;
+  const ratio = device === "phone" ? 1 / PHONE_RATIO : PHONE_RATIO; // largura ÷ altura
+  const aw = Math.max(0, w - FRAME_GAP * 2);
+  const ah = Math.max(0, h - FRAME_GAP * 2);
+  const width = Math.min(aw, ah * ratio);
+  return { width: Math.floor(width), height: Math.floor(width / ratio) };
+}
 interface LogLine {
   level: string;
   text: string;
@@ -17,6 +31,30 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
   const [auto, setAuto] = useState(true);
   const [device, setDevice] = useState<Device>("free");
   const [logs, setLogs] = useState<LogLine[]>([]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stage, setStage] = useState({ w: 0, h: 0 });
+  const [full, setFull] = useState(false);
+
+  // Mede o palco sempre que ele muda de tamanho (janela, tela cheia, esconder console…).
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setStage({ w: e.contentRect.width, h: e.contentRect.height }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const on = () => setFull(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", on);
+    return () => document.removeEventListener("fullscreenchange", on);
+  }, []);
+
+  const toggleFull = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void stageRef.current?.requestFullscreen().catch(() => {});
+  };
+  const size = phoneSize(device, stage.w, stage.h);
   const st = useSyncExternalStore(
     (l) => sync.subscribe(l),
     () => sync.state,
@@ -140,10 +178,23 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
           <option value="phone">Celular em pé</option>
           <option value="landscape">Celular deitado</option>
         </select>
+        <button className="ghost icon" onClick={toggleFull} title="Tela cheia (Esc para sair)">
+          ⛶
+        </button>
       </div>
-      <div className={`preview-stage ${device}`}>
+      <div
+        className={`preview-stage ${device}${full ? " full" : ""}`}
+        ref={stageRef}
+        onDoubleClick={(e) => e.target === e.currentTarget && toggleFull()}
+      >
+        {full && (
+          <button className="exit-full" onClick={toggleFull} title="Sair da tela cheia (Esc)">
+            ✕ sair da tela cheia
+          </button>
+        )}
         <iframe
           ref={frame}
+          style={size ? { width: size.width, height: size.height } : undefined}
           title="Preview do jogo"
           sandbox="allow-scripts allow-pointer-lock allow-popups allow-forms allow-modals"
           allow="autoplay; fullscreen; gamepad"

@@ -136,7 +136,7 @@ export async function joinWithCode(user: User, rawCode: string): Promise<string>
 /** Apaga a sala inteira (só o dono): arquivos, atividade, reservas, chat, convite e a sala. */
 export async function deleteRoom(room: Room, onProgress?: (n: number) => void) {
   let done = 0;
-  for (const sub of ["files", "activity", "claims", "chat"]) {
+  for (const sub of ["files", "activity", "claims", "chat", "history", "checkpoints"]) {
     const snap = await getDocs(collection(db, "rooms", room.id, sub));
     for (let i = 0; i < snap.docs.length; i += 400) {
       const batch = writeBatch(db);

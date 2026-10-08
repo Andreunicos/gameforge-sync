@@ -115,6 +115,31 @@ service cloud.firestore {
           && request.resource.data.summary.size() <= 300;
       }
 
+      // ── histórico: cada gravação com o conteúdo daquela versão (para ver a diferença e restaurar) ──
+      match /history/{entryId} {
+        allow read: if isMember(roomId);
+        allow create, update: if canEdit(roomId)
+          && isAuthor(request.resource.data)
+          && request.resource.data.ts == request.time
+          && request.resource.data.path is string
+          && request.resource.data.content is string
+          && request.resource.data.version is int
+          && request.resource.data.kind in ['edit', 'create', 'delete', 'restore'];
+        allow delete: if isOwner(roomId);
+      }
+
+      // ── backups: "foto" do jogo inteiro (arquivo → versão) ──
+      match /checkpoints/{cpId} {
+        allow read: if isMember(roomId);
+        allow create: if canEdit(roomId)
+          && request.resource.data.author.uid == request.auth.uid
+          && request.resource.data.ts == request.time
+          && request.resource.data.label is string
+          && request.resource.data.label.size() <= 80
+          && request.resource.data.files is map;
+        allow delete: if isOwner(roomId);
+      }
+
       // ── reservas por função (Fase 3, usadas pelo gfs claim) ──
       match /claims/{claimId} {
         allow read: if isMember(roomId);

@@ -9,6 +9,7 @@ import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
+import { addHistory } from "../history";
 import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
 import { MAX_FILE_BYTES } from "../config";
@@ -340,8 +341,9 @@ export class FolderMirror {
         const current = snap.exists() ? (snap.data().version as number) : 0;
         if (current !== baseVersion) throw new Stale();
         tx.set(ref, { path, content: disk, version, author: this.author, updatedAt: serverTimestamp() });
+        addHistory(tx, this.room.id, path, version, disk, snap.exists() ? (snap.data().content as string) : null, this.author);
       });
-      countWrite();
+      countWrite(2);
       await this.setBase(path, { content: disk, version });
       this.status(`↑ ${path} v${version}`);
       this.sync.setClaude(true, path);

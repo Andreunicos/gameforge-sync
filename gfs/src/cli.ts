@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { login, logout, session, type Session } from "./auth.ts";
 import { commit, data, FsError, getDoc, presence, runQuery } from "./firestore.ts";
 import { hasConflictMarkers, merge3 } from "./merge.ts";
+import { diffStats } from "./diff.ts";
 import { Workspace, type FileState } from "./workspace.ts";
 import { ROOM_CLAUDE_MD, ROOM_GAME_MD } from "./templates.ts";
 import { INSTALL_CMD, LATEST_JSON, MAX_FILE_BYTES, VERSION } from "./config.ts";
@@ -69,7 +70,7 @@ type WriteResult =
  * Grava um arquivo na sala só se a versão remota ainda for a base local
  * (precondição de updateTime). Se outra pessoa gravou antes, faz merge de 3 vias.
  */
-async function writeRemote(ws: Workspace, s: Session, path: string, content: string): Promise<WriteResult> {
+async function writeRemote(ws: Workspace, s: Session, path: string, content: string, note = ""): Promise<WriteResult> {
   const roomId = ws.state.roomId;
   for (let attempt = 0; attempt < 3; attempt++) {
     const base: FileState | undefined = ws.state.files[path];
@@ -97,6 +98,20 @@ async function writeRemote(ws: Workspace, s: Session, path: string, content: str
           fields: { path, content: text, version, author: me(s) },
           serverTime: ["updatedAt"],
           precondition: doc ? doc.updateTime : "missing",
+        },
+        // Histórico (o app mostra quem mudou o quê e permite restaurar).
+        {
+          path: `rooms/${roomId}/history/${encodeURIComponent(path)}@${version}`,
+          fields: {
+            path,
+            version,
+            content: text,
+            author: me(s),
+            kind: remote ? "edit" : "create",
+            ...diffStats(remote?.content ?? null, text),
+            ...(note ? { note: note.slice(0, 200) } : {}),
+          },
+          serverTime: ["ts"],
         },
       ]);
       ws.setBase(path, text, { version, updateTime: r.writeResults[0]?.updateTime ?? r.commitTime });
@@ -327,7 +342,7 @@ async function cmdPush(message: string | undefined) {
       out.push(`  ✗ ${path}: maior que 900 KB, não cabe na sala (divida o arquivo)`);
       continue;
     }
-    const r = await writeRemote(ws, s, path, content);
+    const r = await writeRemote(ws, s, path, content, message?.trim() ?? "");
     if (r.kind === "conflict") {
       out.push(`  CONFLITO: ${path} (${r.count}x com ${r.with}) — não enviado`);
       conflicts.push(conflictHunks(path, ws.readLocal(path) ?? ""));

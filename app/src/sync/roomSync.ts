@@ -1,5 +1,6 @@
 import { collection, deleteDoc, doc, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
+import { addDeleteHistory, addHistory } from "../history";
 import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
 import { MAX_FILE_BYTES } from "../config";
@@ -193,6 +194,9 @@ export class RoomSync {
       s.destroy();
       this.sessions.delete(path);
     }
+    // Guarda o último conteúdo no histórico antes de apagar (dá para restaurar depois).
+    const last = this.remote.get(path);
+    if (last) await addDeleteHistory(this.roomId, path, last.content, last.version, this.author).catch(() => {});
     await deleteDoc(doc(db, "rooms", this.roomId, "files", fileDocId(path)));
     countWrite();
     await logActivity(this.roomId, this.author, { kind: "delete", file: path, summary: `apagou ${path}` });
@@ -232,8 +236,9 @@ export class RoomSync {
       const snap = await tx.get(ref);
       const version = snap.exists() ? (snap.data().version as number) + 1 : 1;
       tx.set(ref, { path, content, version, author: this.author, updatedAt: serverTimestamp() });
+      addHistory(tx, this.roomId, path, version, content, snap.exists() ? (snap.data().content as string) : null, this.author);
     });
-    countWrite();
+    countWrite(2);
   }
 
   private async noteSaved(path: string, created: boolean) {

@@ -16,6 +16,8 @@ import { InviteModal, SettingsModal } from "./Modals";
 import { ClaudePanel, type OpenTool } from "./ClaudePanel";
 import { FolderMirror, type MirrorStatus } from "../sync/folderMirror";
 import { Toasts } from "./Toasts";
+import { HistoryPanel } from "./HistoryPanel";
+import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
   const [room, setRoom] = useState<Room | null | undefined>(undefined);
@@ -85,7 +87,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | null>(null);
   const [showPreview, setShowPreview] = useState(true);
   const writes = useSyncExternalStore(onWrites, writesToday);
 
@@ -155,6 +157,27 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     }
   };
 
+  // Backup: primeira vez numa sala antiga o dono grava a versão atual de tudo; depois, 1 foto automática por dia.
+  useEffect(() => {
+    if (readOnly) return;
+    let alive = true;
+    let unsub: (() => void) | undefined;
+    void sync.whenLoaded().then(async () => {
+      if (!alive) return;
+      const me = authorOf(user);
+      await ensureBaseline(room, sync.remoteFiles(), me).catch((e) => console.warn("backup inicial:", e));
+      unsub = watchCheckpoints(room.id, (cps) => {
+        unsub?.();
+        if (alive) void maybeAutoCheckpoint(room.id, sync.remoteFiles(), cps[0], me).catch((e) => console.warn("backup automático:", e));
+      });
+    });
+    return () => {
+      alive = false;
+      unsub?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync]);
+
   const others = useMemo(() => state.people.filter((p) => p.uid !== user.uid), [state.people, user.uid]);
 
   return (
@@ -193,6 +216,9 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
           {showPreview ? "◧ Preview" : "◻ Preview"}
         </button>
+        <button onClick={() => setModal("history")} title="Tudo o que cada pessoa e cada Claude mudou, e os backups do jogo">
+          🕘 Histórico
+        </button>
         {!readOnly && (
           <button onClick={() => setModal("claude")} title="Ligar o seu Claude nesta sala">
             🤖 Claude{" "}
@@ -222,6 +248,9 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}
       {modal === "settings" && <SettingsModal room={room} onClose={() => setModal(null)} />}
+      {modal === "history" && (
+        <HistoryPanel room={room} sync={sync} me={authorOf(user)} readOnly={readOnly} people={state.people} onClose={() => setModal(null)} />
+      )}
       {modal === "claude" && (
         <ClaudePanel
           room={room}
