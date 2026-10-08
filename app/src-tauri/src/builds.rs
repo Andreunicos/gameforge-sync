@@ -37,7 +37,7 @@ fn fetch(url: &str, token: Option<&str>, accept: &str) -> Result<ureq::Response,
 #[tauri::command]
 pub async fn download_asset(app: tauri::AppHandle, url: String, token: String, dir: String, name: String) -> Result<u64, String> {
     let dir = check_build_dir(&app, &dir)?;
-    if name.is_empty() || name.contains(['/', '\']) || name.contains("..") {
+    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
         return Err("nome de arquivo inválido".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
