@@ -386,3 +386,21 @@ button.small { font-size: 12px; padding: 4px 10px; }
 .diff .ln { display: inline-block; width: 44px; color: #5d5470; text-align: right; margin-right: 8px; user-select: none; }
 .diff .sign { display: inline-block; width: 14px; user-select: none; }
 .cp-diff p { line-height: 1.6; overflow-wrap: anywhere; }
+
+/* ── build ── */
+.build-modal { width: min(640px, 100%); }
+.build-targets { display: flex; flex-direction: column; gap: 6px; }
+.build-target { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.build-target.on { border-color: var(--accent); background: #2a1e14; }
+.build-target.off { opacity: 0.45; cursor: default; }
+.build-go { width: 100%; padding: 12px; margin-top: 14px; font-size: 16px; letter-spacing: 0.06em; }
+.build-progress { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.build-jobs { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.build-job { display: flex; padding: 6px 10px; border-radius: 6px; background: var(--panel-2); font-size: 13px; }
+.build-job.pronto { background: #12301f; }
+.build-job.erro { background: #3a1820; }
+.build-job.compilando { background: #2a2214; }
+.build-files { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; }
+.build-history { margin-top: 14px; }
+.build-old { padding: 4px 0; border-bottom: 1px solid var(--line); }
+button.building { border-color: var(--warn); color: var(--warn); }

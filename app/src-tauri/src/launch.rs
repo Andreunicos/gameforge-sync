@@ -50,14 +50,14 @@ pub fn room_dir(app: tauri::AppHandle, slug: String, room_id: String) -> Result<
         .into_iter()
         .find(|d| usable_for(d, &room_id))
         .ok_or("já existe uma pasta com o nome desta sala que não é dela")?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir.join(".gfs")).map_err(|e| e.to_string())?;
     // Libera esta pasta (e só ela) para o plugin de arquivos nesta sessão.
     let _ = app.fs_scope().allow_directory(&dir, true);
     Ok(dir.to_string_lossy().into_owned())
 }
 
 /// Só pastas de sala: filha direta da pasta do usuário (ou da antiga ~/GameForge) e com .gfs dentro.
-fn check_room_dir(app: &tauri::AppHandle, dir: &str) -> Result<PathBuf, String> {
+pub(crate) fn check_room_dir(app: &tauri::AppHandle, dir: &str) -> Result<PathBuf, String> {
     let home = home(app)?;
     let target = PathBuf::from(dir);
     let parent_ok = target.parent() == Some(home.as_path()) || target.parent() == Some(home.join("GameForge").as_path());

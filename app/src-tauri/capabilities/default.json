@@ -11,7 +11,10 @@
     "process:allow-restart",
     "allow-google-login",
     "allow-open-with",
-    "allow-room-dir"
+    "allow-room-dir",
+    "allow-download-asset",
+    "allow-write-build-file",
+    "allow-reveal-build"
   ],
   "remote": {
     "urls": [

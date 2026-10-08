@@ -18,6 +18,8 @@ export interface PreviewInput {
   entry?: string | null;
   /** localStorage da sala, o mesmo em todas as páginas enquanto o preview está aberto. */
   storage?: Record<string, string>;
+  /** Build "Web .html": um arquivo só que roda sozinho (sem o console/localStorage do preview). */
+  standalone?: boolean;
 }
 
 export function findEntry(paths: string[]): string | null {
@@ -155,6 +157,14 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
   }
 
   const head = doc.head;
+  if (input.standalone) {
+    if (input.assetsBase) {
+      const base = doc.createElement("base");
+      base.href = input.assetsBase.replace(/\/?$/, "/") + dirOf(entry);
+      head.prepend(base);
+    }
+    return { html: "<!doctype html>\n" + doc.documentElement.outerHTML, warnings };
+  }
   const root = input.assetsBase ? input.assetsBase.replace(/\/?$/, "/") : FAKE_ROOT;
   const base = doc.createElement("base");
   base.href = root + dirOf(entry);

@@ -13,7 +13,7 @@ export const MAX_FILE_BYTES = 900_000;
 
 /** Só arquivos de texto/código vão para a sala; imagens e sons ficam no repo do jogo. */
 export const TEXT_EXT = /\.(html?|js|mjs|cjs|ts|css|json|txt|md|csv|xml|svg|glsl|frag|vert)$/i;
-export const IGNORE_DIRS = new Set([".gfs", ".git", "node_modules", "dist", "android", "ios", ".claude"]);
+export const IGNORE_DIRS = new Set([".gfs", ".git", "node_modules", "dist", "android", "ios", ".claude", "builds"]);
 
 declare const __GFS_VERSION__: string;
 export const VERSION: string = typeof __GFS_VERSION__ === "string" ? __GFS_VERSION__ : "dev";

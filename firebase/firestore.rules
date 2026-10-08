@@ -140,6 +140,14 @@ service cloud.firestore {
         allow delete: if isOwner(roomId);
       }
 
+      // ── builds feitos pelo botão BUILD (para todos verem e baixarem de novo) ──
+      match /builds/{buildId} {
+        allow read: if isMember(roomId);
+        allow create: if canEdit(roomId) && request.resource.data.by.uid == request.auth.uid && request.resource.data.ts == request.time;
+        allow update: if canEdit(roomId) && request.resource.data.by == resource.data.by;
+        allow delete: if isOwner(roomId);
+      }
+
       // ── reservas por função (Fase 3, usadas pelo gfs claim) ──
       match /claims/{claimId} {
         allow read: if isMember(roomId);
@@ -167,6 +175,12 @@ service cloud.firestore {
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.name is string
         && request.resource.data.name.size() <= 80;
+    }
+
+    // ── token da fábrica de builds (fine-grained, só o repo gameforge-builds): só as contas autorizadas leem ──
+    match /secrets/{id} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.token.email == 'andreluizvillanova123@gmail.com';
     }
 
     // ── convites: quem sabe o código consegue ler (mas ninguém consegue listar) ──

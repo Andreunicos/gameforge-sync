@@ -17,6 +17,8 @@ import { ClaudePanel, type OpenTool } from "./ClaudePanel";
 import { FolderMirror, type MirrorStatus } from "../sync/folderMirror";
 import { Toasts } from "./Toasts";
 import { HistoryPanel } from "./HistoryPanel";
+import { BuildPanel } from "./BuildPanel";
+import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
@@ -87,7 +89,9 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | null>(null);
+  const build = useSyncExternalStore(onBuild, () => buildState(room.id));
+  const building = build.phase === "enviando" || build.phase === "compilando" || build.phase === "baixando";
   const [showPreview, setShowPreview] = useState(true);
   const writes = useSyncExternalStore(onWrites, writesToday);
 
@@ -216,6 +220,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
           {showPreview ? "◧ Preview" : "◻ Preview"}
         </button>
+        {!readOnly && (
+          <button className={building ? "building" : ""} onClick={() => setModal("build")} title="Gerar o jogo para Web, Android, Windows e Linux">
+            {building ? "⚙️ Build…" : build.phase === "pronto" ? "🔨 Build ✅" : "🔨 Build"}
+          </button>
+        )}
         <button onClick={() => setModal("history")} title="Tudo o que cada pessoa e cada Claude mudou, e os backups do jogo">
           🕘 Histórico
         </button>
@@ -248,6 +257,15 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}
       {modal === "settings" && <SettingsModal room={room} onClose={() => setModal(null)} />}
+      {modal === "build" && (
+        <BuildPanel
+          room={room}
+          sync={sync}
+          me={authorOf(user)}
+          isAdmin={user.email === "andreluizvillanova123@gmail.com"}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === "history" && (
         <HistoryPanel room={room} sync={sync} me={authorOf(user)} readOnly={readOnly} people={state.people} onClose={() => setModal(null)} />
       )}
