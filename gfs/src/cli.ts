@@ -9,7 +9,8 @@ import { hasConflictMarkers, merge3 } from "./merge.ts";
 import { diffStats } from "./diff.ts";
 import { Workspace, type FileState } from "./workspace.ts";
 import { ROOM_CLAUDE_MD, ROOM_GAME_MD } from "./templates.ts";
-import { INSTALL_CMD, LATEST_JSON, MAX_FILE_BYTES, VERSION } from "./config.ts";
+import { INSTALL_CMD, LATEST_JSON, VERSION } from "./config.ts";
+import { blobDocId, isBig, kb, MAX_BIG_BYTES, splitParts, utf8Bytes } from "./bigfile.ts";
 
 interface Author {
   uid: string;
@@ -21,6 +22,9 @@ interface RemoteFile {
   content: string;
   version: number;
   author: Author;
+  /** Arquivo grande: conteúdo em pedaços em rooms/{id}/blobs (ver bigfile.ts). */
+  parts?: number;
+  size?: number;
 }
 interface RoomData {
   name: string;
@@ -29,9 +33,9 @@ interface RoomData {
 }
 
 const filePath = (roomId: string, path: string) => `rooms/${roomId}/files/${encodeURIComponent(path)}`;
+const blobPath = (roomId: string, path: string, i: number) => `rooms/${roomId}/blobs/${blobDocId(encodeURIComponent(path), i)}`;
 const me = (s: Session): Author => ({ uid: s.uid, name: s.name, kind: "claude" });
 const who = (a?: Author) => (!a ? "?" : a.kind === "claude" ? `Claude de ${a.name}` : a.name);
-const bytes = (s: string) => Buffer.byteLength(s, "utf8");
 /** Volta uns segundos no lastSync para não perder gravação que estava chegando. */
 const since = (iso: string) => new Date(new Date(iso).getTime() - 5000).toISOString();
 
@@ -41,6 +45,19 @@ async function loadRoom(roomId: string, s: Session) {
   const room = data<RoomData>(doc);
   const role = room.roles?.[s.uid] ?? "viewer";
   return { room, role };
+}
+
+/** Conteúdo inteiro do arquivo (junta os pedaços se for grande). */
+async function fullContent(roomId: string, f: RemoteFile): Promise<string> {
+  if (!f.parts) return f.content;
+  const docs = await Promise.all(Array.from({ length: f.parts }, (_, i) => getDoc(blobPath(roomId, f.path, i))));
+  return docs
+    .map((d) => {
+      const b = d ? data<{ version: number; data: string }>(d) : null;
+      if (!b || b.version !== f.version) throw new Error(`${f.path} mudou enquanto baixava, rode de novo`);
+      return b.data;
+    })
+    .join("");
 }
 
 function roleLabel(role: string) {
@@ -76,6 +93,7 @@ async function writeRemote(ws: Workspace, s: Session, path: string, content: str
     const base: FileState | undefined = ws.state.files[path];
     const doc = await getDoc(filePath(roomId, path));
     const remote = doc ? data<RemoteFile>(doc) : null;
+    if (remote) remote.content = await fullContent(roomId, remote);
     let text = content;
     let merged = false;
 
@@ -91,24 +109,29 @@ async function writeRemote(ws: Workspace, s: Session, path: string, content: str
     }
 
     const version = (remote?.version ?? 0) + 1;
+    const big = isBig(text);
+    const parts = big ? splitParts(text) : [];
+    const oldParts = remote?.parts ?? 0;
     try {
       const r = await commit([
         {
           path: filePath(roomId, path),
-          fields: { path, content: text, version, author: me(s) },
+          fields: { path, content: big ? "" : text, version, author: me(s), ...(big ? { parts: parts.length, size: utf8Bytes(text) } : {}) },
           serverTime: ["updatedAt"],
           precondition: doc ? doc.updateTime : "missing",
         },
-        // Histórico (o app mostra quem mudou o quê e permite restaurar).
+        ...parts.map((d, i) => ({ path: blobPath(roomId, path, i), fields: { path, version, i, data: d } })),
+        ...Array.from({ length: Math.max(0, oldParts - parts.length) }, (_, k) => ({ path: blobPath(roomId, path, parts.length + k), delete: true })),
+        // Histórico (o app mostra quem mudou o quê e permite restaurar). Arquivo grande: sem o conteúdo.
         {
           path: `rooms/${roomId}/history/${encodeURIComponent(path)}@${version}`,
           fields: {
             path,
             version,
-            content: text,
+            content: big ? "" : text,
             author: me(s),
             kind: remote ? "edit" : "create",
-            ...diffStats(remote?.content ?? null, text),
+            ...(big ? { added: 0, removed: 0, where: [], big: true } : diffStats(remote && !oldParts ? remote.content : null, text)),
             ...(note ? { note: note.slice(0, 200) } : {}),
           },
           serverTime: ["ts"],
@@ -189,6 +212,7 @@ async function cmdClone(roomId: string | undefined, folder: string | undefined) 
   const ws = Workspace.create(root, { roomId, roomName: room.name, lastSync: readTime, files: {} });
   for (const d of docs) {
     const f = data<RemoteFile>(d);
+    f.content = await fullContent(roomId, f);
     ws.writeLocal(f.path, f.content);
     ws.setBase(f.path, f.content, { version: f.version, updateTime: d.updateTime! });
   }
@@ -275,6 +299,7 @@ async function cmdPull() {
     const f = data<RemoteFile>(d);
     const known = ws.state.files[f.path];
     if (known && known.version >= f.version) continue; // eco do meu push
+    f.content = await fullContent(roomId, f);
     const local = ws.readLocal(f.path);
     const base = known ? ws.readBase(f.path) : null;
     const fs = { version: f.version, updateTime: d.updateTime! };
@@ -338,8 +363,8 @@ async function cmdPush(message: string | undefined) {
       conflicts.push(conflictHunks(path, content));
       continue;
     }
-    if (bytes(content) > MAX_FILE_BYTES) {
-      out.push(`  ✗ ${path}: maior que 900 KB, não cabe na sala (divida o arquivo)`);
+    if (utf8Bytes(content) > MAX_BIG_BYTES) {
+      out.push(`  ✗ ${path}: ${kb(utf8Bytes(content))}, passa do limite de ${kb(MAX_BIG_BYTES)} por arquivo (divida o arquivo)`);
       continue;
     }
     const r = await writeRemote(ws, s, path, content, message?.trim() ?? "");

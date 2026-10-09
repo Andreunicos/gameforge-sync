@@ -18,8 +18,6 @@ export const APP_VERSION: string = __APP_VERSION__;
 
 export const firebaseReady = !firebaseConfig.apiKey.startsWith("COLE");
 
-// Tamanho máximo de um arquivo de código (o Firestore aceita 1 MB por documento).
-export const MAX_FILE_BYTES = 900_000;
 
 // Grava no Firebase depois de X ms sem digitar.
 export const SAVE_DEBOUNCE_MS = 2000;

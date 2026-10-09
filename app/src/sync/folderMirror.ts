@@ -7,12 +7,12 @@
 import { exists, mkdir, readDir, readTextFile, remove, watch, writeTextFile, type UnwatchFn } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
-import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { doc, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
-import { addHistory } from "../history";
 import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
-import { MAX_FILE_BYTES } from "../config";
+import { MAX_BIG_BYTES, kb, utf8Bytes } from "../bigfile";
+import { putFile } from "./fileStore";
 import type { Author, RemoteFile, Room } from "../types";
 import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
@@ -326,8 +326,11 @@ export class FolderMirror {
     }
     if (b && disk === b.content) return;
     if (hasConflictMarkers(disk)) return;
-    if (new Blob([disk]).size > MAX_FILE_BYTES) {
-      this.sync.onToast({ kind: "warn", text: `${path} passou de 900 KB e não cabe na sala. Peça ao Claude para dividir o arquivo.` });
+    if (utf8Bytes(disk) > MAX_BIG_BYTES) {
+      this.sync.onToast({
+        kind: "warn",
+        text: `${path} tem ${kb(utf8Bytes(disk))} e o limite da sala é ${kb(MAX_BIG_BYTES)} por arquivo. Peça ao Claude para dividir o arquivo ou diminuir o som/imagem.`,
+      });
       return;
     }
 
@@ -336,14 +339,14 @@ export class FolderMirror {
     const ref = doc(db, "rooms", this.room.id, "files", fileDocId(path));
     this.inflight.set(path, { content: disk, version });
     try {
+      let writes = 0;
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const current = snap.exists() ? (snap.data().version as number) : 0;
         if (current !== baseVersion) throw new Stale();
-        tx.set(ref, { path, content: disk, version, author: this.author, updatedAt: serverTimestamp() });
-        addHistory(tx, this.room.id, path, version, disk, snap.exists() ? (snap.data().content as string) : null, this.author);
+        writes = putFile(tx, this.room.id, path, disk, version, this.author, snap);
       });
-      countWrite(2);
+      countWrite(writes);
       await this.setBase(path, { content: disk, version });
       this.status(`↑ ${path} v${version}`);
       this.sync.setClaude(true, path);

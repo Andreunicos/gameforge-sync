@@ -94,7 +94,8 @@ service cloud.firestore {
 
         function validFile() {
           let d = request.resource.data;
-          return d.keys().hasOnly(['path', 'content', 'version', 'author', 'updatedAt'])
+          return d.keys().hasOnly(['path', 'content', 'version', 'author', 'updatedAt', 'parts', 'size'])
+            && (!('parts' in d) || (d.parts is int && d.parts <= 10))
             && d.path is string
             && d.path.size() <= 300
             && d.content is string
@@ -102,6 +103,17 @@ service cloud.firestore {
             && d.updatedAt == request.time
             && isAuthor(d);
         }
+      }
+
+      // ── pedaços dos arquivos grandes (> 900 KB): {arquivo}~{n}, cada um com a versão do arquivo ──
+      match /blobs/{blobId} {
+        allow read: if isMember(roomId);
+        allow create, update: if canEdit(roomId)
+          && request.resource.data.keys().hasOnly(['path', 'version', 'i', 'data'])
+          && request.resource.data.data is string
+          && request.resource.data.version is int
+          && request.resource.data.i is int;
+        allow delete: if canEdit(roomId);
       }
 
       // ── feed de atividade (só cresce) ──

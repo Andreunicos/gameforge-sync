@@ -31,6 +31,9 @@ export interface RemoteFile {
   version: number;
   author: Author;
   updatedAt?: Timestamp;
+  /** Arquivo grande: o conteúdo está em `parts` pedaços em rooms/{id}/blobs (ver bigfile.ts). */
+  parts?: number;
+  size?: number;
 }
 
 /** rooms/{roomId}/activity/{id} */

@@ -77,7 +77,7 @@ export function FileList({
         })),
       );
       const skipped = await sync.importFiles(data, (n) => setImporting(`${n}/${files.length}`));
-      if (skipped.length) toast(`Ficaram de fora (maiores que 900 KB): ${skipped.join(", ")}`, "warn");
+      if (skipped.length) toast(`Ficaram de fora (maiores que 7 MB): ${skipped.join(", ")}`, "warn");
       else toast(`${data.length} arquivo(s) importados.`, "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e));

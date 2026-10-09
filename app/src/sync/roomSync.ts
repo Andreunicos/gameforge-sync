@@ -1,9 +1,10 @@
-import { collection, deleteDoc, doc, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, runTransaction, writeBatch } from "firebase/firestore";
 import { db } from "../firebase";
-import { addDeleteHistory, addHistory } from "../history";
+import { addDeleteHistory } from "../history";
 import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
-import { MAX_FILE_BYTES } from "../config";
+import { MAX_BIG_BYTES, blobDocId, utf8Bytes } from "../bigfile";
+import { putFile, readBig } from "./fileStore";
 import type { Author, Presence, RemoteFile } from "../types";
 import { FileSession, fileDocId, type SaveStatus } from "./session";
 import { PresenceChannel } from "./presence";
@@ -30,6 +31,8 @@ export interface Toast {
  */
 export class RoomSync {
   private remote = new Map<string, RemoteFile>();
+  /** Versão de cada arquivo grande que está sendo montada agora. */
+  private bigWanted = new Map<string, number>();
   private sessions = new Map<string, FileSession>();
   private lastEditActivity = new Map<string, number>();
   private unsubFiles: () => void;
@@ -50,26 +53,22 @@ export class RoomSync {
     this.unsubFiles = onSnapshot(
       collection(db, "rooms", roomId, "files"),
       (snap) => {
+        const big: Promise<void>[] = [];
         for (const ch of snap.docChanges()) {
           const f = { id: ch.doc.id, ...ch.doc.data() } as RemoteFile;
           if (ch.type === "removed") {
-            this.remote.delete(f.path);
-            this.sessions.get(f.path)?.onRemote(null);
-            this.remoteListeners.forEach((l) => l(f.path, null));
+            this.bigWanted.delete(f.path);
+            this.apply(f.path, null);
+          } else if (f.parts) {
+            big.push(this.loadBig(f));
           } else {
-            this.remote.set(f.path, f);
-            this.sessions.get(f.path)?.onRemote(f);
-            this.remoteListeners.forEach((l) => l(f.path, f));
+            this.bigWanted.delete(f.path);
+            this.apply(f.path, f);
           }
-          this.changeListeners.forEach((l) => l(f.path));
         }
-        const files = [...this.remote.values()].sort((a, b) => a.path.localeCompare(b.path));
-        let active = this.state.active;
-        if (!this.state.loaded && !active) {
-          active = files.find((f) => f.path === "index.html")?.path ?? files[0]?.path ?? null;
-        }
-        this.set({ files, loaded: true, active });
-        this.loadedWaiters.splice(0).forEach((w) => w());
+        // Na primeira carga a sala só fica "pronta" com os arquivos grandes montados.
+        if (!this.state.loaded && big.length) void Promise.all(big).then(() => this.publish());
+        else this.publish();
       },
       (e) => this.set({ error: e.message }),
     );
@@ -82,6 +81,37 @@ export class RoomSync {
         this.refreshCursors();
       },
     );
+  }
+
+  private apply(path: string, f: RemoteFile | null) {
+    if (f) this.remote.set(path, f);
+    else this.remote.delete(path);
+    this.sessions.get(path)?.onRemote(f);
+    this.remoteListeners.forEach((l) => l(path, f));
+    this.changeListeners.forEach((l) => l(path));
+  }
+
+  /** Arquivo grande: busca os pedaços e só então entrega (se ninguém gravou outra versão nesse meio-tempo). */
+  private async loadBig(f: RemoteFile) {
+    this.bigWanted.set(f.path, f.version);
+    try {
+      const content = await readBig(this.roomId, f);
+      if (content === null || this.bigWanted.get(f.path) !== f.version) return;
+      this.apply(f.path, { ...f, content });
+      if (this.state.loaded) this.publish();
+    } catch (e) {
+      this.onToast({ kind: "error", text: `Não deu para baixar ${f.path}: ${e instanceof Error ? e.message : e}` });
+    }
+  }
+
+  private publish() {
+    const files = [...this.remote.values()].sort((a, b) => a.path.localeCompare(b.path));
+    let active = this.state.active;
+    if (!this.state.loaded && !active) {
+      active = files.find((f) => f.path === "index.html")?.path ?? files[0]?.path ?? null;
+    }
+    this.set({ files, loaded: true, active });
+    this.loadedWaiters.splice(0).forEach((w) => w());
   }
 
   // ── assinatura para o React ─────────────────────────────────────────────
@@ -197,6 +227,12 @@ export class RoomSync {
     // Guarda o último conteúdo no histórico antes de apagar (dá para restaurar depois).
     const last = this.remote.get(path);
     if (last) await addDeleteHistory(this.roomId, path, last.content, last.version, this.author).catch(() => {});
+    if (last?.parts) {
+      const batch = writeBatch(db);
+      for (let i = 0; i < last.parts; i++) batch.delete(doc(db, "rooms", this.roomId, "blobs", blobDocId(fileDocId(path), i)));
+      await batch.commit();
+      countWrite(last.parts);
+    }
     await deleteDoc(doc(db, "rooms", this.roomId, "files", fileDocId(path)));
     countWrite();
     await logActivity(this.roomId, this.author, { kind: "delete", file: path, summary: `apagou ${path}` });
@@ -209,7 +245,7 @@ export class RoomSync {
     const skipped: string[] = [];
     for (const f of files) {
       const path = normalizePath(f.path);
-      if (new Blob([f.content]).size > MAX_FILE_BYTES) {
+      if (utf8Bytes(f.content) > MAX_BIG_BYTES) {
         skipped.push(path);
         continue;
       }
@@ -232,13 +268,13 @@ export class RoomSync {
   /** Grava um arquivo inteiro sem passar pelo editor (criar/importar). */
   private async writeWhole(path: string, content: string) {
     const ref = doc(db, "rooms", this.roomId, "files", fileDocId(path));
+    let writes = 0;
     await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
       const version = snap.exists() ? (snap.data().version as number) + 1 : 1;
-      tx.set(ref, { path, content, version, author: this.author, updatedAt: serverTimestamp() });
-      addHistory(tx, this.roomId, path, version, content, snap.exists() ? (snap.data().content as string) : null, this.author);
+      writes = putFile(tx, this.roomId, path, content, version, this.author, snap);
     });
-    countWrite(2);
+    countWrite(writes);
   }
 
   private async noteSaved(path: string, created: boolean) {

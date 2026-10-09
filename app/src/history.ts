@@ -19,12 +19,13 @@ import {
   updateDoc,
   writeBatch,
   type Timestamp,
-  type Transaction,
 } from "firebase/firestore";
 import { diffStats } from "./diff";
+import { isBig } from "./bigfile";
 import { db } from "./firebase";
 import { countWrite } from "./usage";
 import { fileDocId } from "./sync/session";
+import { putFile } from "./sync/fileStore";
 import type { Author, RemoteFile, Room } from "./types";
 
 export interface HistoryEntry {
@@ -39,6 +40,8 @@ export interface HistoryEntry {
   where: string[];
   kind: "edit" | "create" | "delete" | "restore";
   note?: string;
+  /** Arquivo grande: o conteúdo dessa versão não fica no histórico (não dá para restaurar). */
+  big?: boolean;
 }
 
 export interface Checkpoint {
@@ -65,30 +68,17 @@ export function historyRecord(
   kind: HistoryEntry["kind"],
   note?: string,
 ) {
+  const big = isBig(content);
   return {
     path,
     version,
-    content,
+    content: big ? "" : content,
     author,
     kind,
-    ...diffStats(prev, content),
+    ...(big ? { added: 0, removed: 0, where: [], big: true } : diffStats(prev, content)),
     ...(note ? { note: note.slice(0, 200) } : {}),
     ts: serverTimestamp(),
   };
-}
-
-/** Grava a entrada de histórico dentro da mesma transação que grava o arquivo. */
-export function addHistory(
-  tx: Transaction,
-  roomId: string,
-  path: string,
-  version: number,
-  content: string,
-  prev: string | null,
-  author: Author,
-  kind: HistoryEntry["kind"] = prev === null ? "create" : "edit",
-) {
-  tx.set(doc(db, "rooms", roomId, "history", historyId(path, version)), historyRecord(path, version, content, prev, author, kind));
 }
 
 /** Arquivo apagado: guarda o último conteúdo para poder restaurar. */
@@ -128,15 +118,15 @@ export async function getVersion(roomId: string, path: string, version: number):
 /** Grava `content` como versão nova do arquivo (não apaga nada: a versão atual continua no histórico). */
 export async function restoreFile(roomId: string, path: string, content: string, author: Author, note: string) {
   const ref = doc(db, "rooms", roomId, "files", fileDocId(path));
+  let writes = 0;
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const cur = snap.exists() ? (snap.data() as RemoteFile) : null;
-    if (cur?.content === content) return;
+    if (!cur?.parts && cur?.content === content) return;
     const version = (cur?.version ?? 0) + 1;
-    tx.set(ref, { path, content, version, author, updatedAt: serverTimestamp() });
-    tx.set(doc(db, "rooms", roomId, "history", historyId(path, version)), historyRecord(path, version, content, cur?.content ?? null, author, "restore", note));
+    writes = putFile(tx, roomId, path, content, version, author, snap, "restore", note);
   });
-  countWrite(2);
+  countWrite(writes);
 }
 
 export async function createCheckpoint(roomId: string, files: RemoteFile[], author: Author, label: string, auto = false) {
@@ -161,7 +151,7 @@ export async function restoreCheckpoint(roomId: string, cp: Checkpoint, current:
   for (const [path, version] of Object.entries(cp.files)) {
     if (now.get(path)?.version === version) continue;
     const old = await getVersion(roomId, path, version);
-    if (!old) {
+    if (!old || old.big) {
       missing.push(path);
       continue;
     }

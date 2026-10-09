@@ -38,7 +38,7 @@ Estrutura do repo (`Andreunicos/gameforge-sync`, público):
 
 1. **O app é um "banco de armazenamento" + editor.** Não há servidor próprio. App e CLI falam direto com o Firebase; as regras de segurança do Firebase fazem o papel de porteiro.
 2. **Firebase no plano Spark (grátis, sem cartão):**
-   - **Firestore:** código do jogo (um documento por arquivo, com versão), feed de atividade, reservas, chat. Limites grátis: 1 GiB, 50 mil leituras e 20 mil gravações por dia. Limite de 1 MB por documento.
+   - **Firestore:** código do jogo (um documento por arquivo, com versão), feed de atividade, reservas, chat. Limites grátis: 1 GiB, 50 mil leituras e 20 mil gravações por dia. Limite de 1 MB por documento: arquivo acima de 900 KB vai em pedaços para `rooms/{id}/blobs/{arquivo~n}` (o doc do arquivo fica com `content: ""` + `parts`/`size`; cada pedaço leva a `version`). Limite de 7 MB por arquivo. Toda gravação passa por `putFile` (`app/src/sync/fileStore.ts`); o gfs faz o mesmo em `writeRemote`. Histórico de arquivo grande guarda só quem/quando (`big: true`, sem conteúdo, sem restaurar). Lógica comum em `bigfile.ts` (cópia igual em app/src e gfs/src).
    - **Realtime Database:** presença e cursores (cobra por volume, não por gravação). 1 GB grátis.
    - **Firebase Auth:** login com conta Google.
    - **NÃO usar Cloud Storage no início:** desde fev/2026 exige plano Blaze (cartão). O Firebase grátis NÃO tem 50 GB.

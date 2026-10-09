@@ -1,13 +1,14 @@
 import { Annotation, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { doc, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
-import { addHistory } from "../history";
-import { MAX_FILE_BYTES, SAVE_DEBOUNCE_MS } from "../config";
+import { SAVE_DEBOUNCE_MS } from "../config";
+import { MAX_BIG_BYTES, kb, utf8Bytes } from "../bigfile";
 import { countWrite } from "../usage";
 import type { Author, RemoteFile } from "../types";
 import { editorExtensions, setRemoteCursors, type RemoteCursor } from "./editorSetup";
 import { hasConflictMarkers, merge3 } from "./merge";
+import { putFile } from "./fileStore";
 
 export type SaveStatus = "saved" | "dirty" | "saving" | "conflict" | "error" | "too-big";
 
@@ -178,8 +179,8 @@ export class FileSession {
       this.setStatus("conflict");
       return;
     }
-    if (new Blob([content]).size > MAX_FILE_BYTES) {
-      this.setStatus("too-big", "Arquivo maior que 900 KB não cabe num documento do Firestore.");
+    if (utf8Bytes(content) > MAX_BIG_BYTES) {
+      this.setStatus("too-big", `${this.path} tem ${kb(utf8Bytes(content))}: o limite da sala é ${kb(MAX_BIG_BYTES)} por arquivo.`);
       return;
     }
 
@@ -190,14 +191,14 @@ export class FileSession {
     this.inflight = { content, version };
     this.setStatus("saving");
     try {
+      let writes = 0;
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const current = snap.exists() ? (snap.data().version as number) : 0;
         if (current !== baseVersion) throw new StaleVersion();
-        tx.set(ref, { path: this.path, content, version, author: this.hooks.author, updatedAt: serverTimestamp() });
-        addHistory(tx, this.hooks.roomId, this.path, version, content, snap.exists() ? (snap.data().content as string) : null, this.hooks.author);
+        writes = putFile(tx, this.hooks.roomId, this.path, content, version, this.hooks.author, snap);
       });
-      countWrite(2);
+      countWrite(writes);
       if (this.base.version < version) this.base = { content, version };
       this.hooks.onSaved(this.path, baseVersion === 0);
       if (!this.destroyed) this.setStatus(this.dirty ? "dirty" : "saved");

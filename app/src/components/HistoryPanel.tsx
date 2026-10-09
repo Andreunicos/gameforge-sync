@@ -283,6 +283,11 @@ function EntryDetail({ room, e, me, readOnly, busy, setBusy, setMsg, setError }:
   useEffect(() => {
     let alive = true;
     (async () => {
+      if (e.big) {
+        setNote("Arquivo grande (ex.: som ou imagem em texto): o histórico guarda quem mudou e quando, mas não o conteúdo dessa versão.");
+        setLines([]);
+        return;
+      }
       if (e.kind === "delete") {
         setNote("Conteúdo do arquivo quando foi apagado:");
         setLines(e.content.split("\n").map((text, i) => ({ t: "del", text, old: i + 1 })));
@@ -290,7 +295,7 @@ function EntryDetail({ room, e, me, readOnly, busy, setBusy, setMsg, setError }:
       }
       const prev = await getVersion(room.id, e.path, e.version - 1);
       if (!alive) return;
-      if (!prev) {
+      if (!prev || prev.big) {
         setNote(e.version === 1 ? "Arquivo novo:" : "Sem a versão anterior no histórico; mostrando o arquivo inteiro:");
         setLines(e.content.split("\n").map((text, i) => ({ t: e.version === 1 ? "add" : "same", text, neu: i + 1 })));
       } else {
@@ -333,7 +338,7 @@ function EntryDetail({ room, e, me, readOnly, busy, setBusy, setMsg, setError }:
             {e.note ? ` · ${e.note}` : ""}
           </div>
         </div>
-        {!readOnly && (
+        {!readOnly && !e.big && (
           <button className="primary" disabled={busy} onClick={() => void restore()}>
             ↩ {e.kind === "delete" ? "Recriar arquivo" : "Voltar para esta versão"}
           </button>
