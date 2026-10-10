@@ -10,6 +10,8 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null
         && request.auth.token.email_verified == true
+        // Só Google ou link no e-mail (Hotmail etc.); login com senha fica de fora.
+        && request.auth.token.firebase.sign_in_provider in ['google.com', 'emailLink']
         && request.auth.token.email in [
           'andreluizvillanova123@gmail.com',
           'kaue.bimok@gmail.com',

@@ -15,7 +15,9 @@ export function LoginScreen() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("configuration-not-found") || msg.includes("operation-not-allowed"))
-        setError("O login Google ainda não está ligado no Firebase (Authentication → Método de login → Google → Ativar).");
+        setError("Esse tipo de login ainda não está ligado no Firebase (Authentication → Método de login).");
+      else if (msg.includes("invalid-action-code") || msg.includes("expired-action-code"))
+        setError("Esse link de e-mail já foi usado ou expirou. Clique em Entrar e peça um link novo.");
       else if (msg.includes("popup-closed-by-user") || msg.includes("cancelled-popup-request")) setError(null);
       else setError(msg);
     } finally {
@@ -28,10 +30,10 @@ export function LoginScreen() {
       <div className="card">
         <Brand />
         <p className="muted">
-          Entre com sua conta Google. Cada pessoa da sala (e o Claude dela, pelo <code>gfs</code>) aparece com o próprio nome.
+          Entre com sua conta Google ou com seu e-mail (Hotmail, Outlook…). Cada pessoa da sala (e o Claude dela, pelo <code>gfs</code>) aparece com o próprio nome.
         </p>
         <button className="primary" style={{ width: "100%", padding: 12, marginTop: 8 }} onClick={go} disabled={busy}>
-          {busy ? (isTauri() ? "Termine o login no navegador…" : "Entrando…") : "Entrar com Google"}
+          {busy ? (isTauri() ? "Termine o login no navegador…" : "Entrando…") : isTauri() ? "Entrar (Google ou e-mail)" : "Entrar com Google"}
         </button>
         {error && <div className="error-box">{error}</div>}
       </div>

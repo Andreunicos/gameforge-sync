@@ -87,12 +87,20 @@ async function postJson(url: string, body: unknown) {
 }
 
 export async function login(): Promise<Session> {
-  const googleIdToken = await waitForGoogleToken();
-  const r = await postJson(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${API_KEY}`, {
-    postBody: `id_token=${googleIdToken}&providerId=google.com`,
-    requestUri: "http://localhost",
-    returnSecureToken: true,
-  });
+  const token = await waitForGoogleToken();
+  // Login por e-mail (Hotmail etc.): a página devolve "emaillink:" + {email, link}.
+  const r = token.startsWith("emaillink:")
+    ? await (async () => {
+        const { email, link } = JSON.parse(token.slice("emaillink:".length)) as { email: string; link: string };
+        const oobCode = new URL(link).searchParams.get("oobCode");
+        if (!oobCode) throw new Error("link de e-mail inválido");
+        return postJson(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithEmailLink?key=${API_KEY}`, { email, oobCode });
+      })()
+    : await postJson(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${API_KEY}`, {
+        postBody: `id_token=${token}&providerId=google.com`,
+        requestUri: "http://localhost",
+        returnSecureToken: true,
+      });
   const s: Session = {
     uid: String(r.localId),
     email: String(r.email ?? ""),
