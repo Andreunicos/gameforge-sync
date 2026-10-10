@@ -15,7 +15,7 @@ Estrutura do repo (`Andreunicos/gameforge-sync`, público):
   - Versão única em `app/package.json` (o `tauri.conf.json` aponta para ele).
 - `firebase/firestore.rules`, `firebase/database.rules.json` — porteiro (membros, papéis, versão +1, convites). Deploy: `npx firebase-tools deploy --only firestore:rules,database` na raiz.
 - `.github/workflows/release.yml` — tag `v*` → tauri-action (Windows/NSIS) → Release + `latest.json` assinado.
-- Login no app de PC: abre https://gameforge-sync.web.app/login (hosting/login/index.html, Firebase Hosting) no navegador, que devolve o id_token para 127.0.0.1:<porta>/callback (google.rs). Sem cliente OAuth de desktop.
+- Login no app de PC: abre https://gameforge-sync.web.app/login (hosting/login/index.html, Firebase Hosting) no navegador, que devolve o id_token para 127.0.0.1:<porta>/callback (google.rs). Sem cliente OAuth de desktop. Também aceita link no e-mail (Hotmail etc., provedor Email link do Firebase): a página manda `id_token=emaillink:{email,link}` pelo mesmo callback e quem usa o link é o app (`signInWithEmailLink`) ou o gfs (REST `accounts:signInWithEmailLink`). As regras só aceitam `sign_in_provider` google.com ou emailLink.
 - Só 3 e-mails autorizados (regras + ALLOWED_EMAILS). Atualização é automática ao abrir (UpdateBanner).
 - Chave de assinatura do updater: `C:\Users\BIGHOUSE\.tauri\gameforge.key` (sem senha). Precisa estar no secret `TAURI_SIGNING_PRIVATE_KEY` do repo e em backup.
 - Convite = documento `invites/{código}`; entrar = update na sala validado pelas regras (`isJoining`).
