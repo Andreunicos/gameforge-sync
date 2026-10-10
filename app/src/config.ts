@@ -12,7 +12,7 @@ export const firebaseConfig = {
 
 // Contas que podem usar o app. Quem barra de verdade são as regras do Firebase
 // (firebase/firestore.rules e database.rules.json); aqui é só para mostrar um aviso claro.
-export const ALLOWED_EMAILS = ["andreluizvillanova123@gmail.com", "kaue.bimok@gmail.com", "jonatas3dmodel@gmail.com"];
+export const ALLOWED_EMAILS = ["andreluizvillanova123@gmail.com", "kaue.bimok@gmail.com", "jonatas3dmodel@gmail.com", "adriwolf@hotmail.com"];
 
 export const APP_VERSION: string = __APP_VERSION__;
 
