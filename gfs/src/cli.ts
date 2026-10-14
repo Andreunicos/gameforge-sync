@@ -10,6 +10,7 @@ import { diffStats } from "./diff.ts";
 import { Workspace, type FileState } from "./workspace.ts";
 import { ROOM_CLAUDE_MD, ROOM_GAME_MD } from "./templates.ts";
 import { INSTALL_CMD, LATEST_JSON, VERSION } from "./config.ts";
+import { mapCommand } from "./map.ts";
 import { blobDocId, isBig, kb, MAX_BIG_BYTES, splitParts, utf8Bytes } from "./bigfile.ts";
 
 interface Author {
@@ -460,6 +461,9 @@ async function main() {
       break;
     case "push":
       await cmdPush(args.join(" "));
+      break;
+    case "map":
+      mapCommand();
       break;
     case "claim":
     case "release":

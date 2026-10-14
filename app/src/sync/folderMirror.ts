@@ -13,6 +13,7 @@ import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
 import { MAX_BIG_BYTES, kb, utf8Bytes } from "../bigfile";
 import { putFile } from "./fileStore";
+import { buildMap } from "./mapa";
 import type { Author, RemoteFile, Room } from "../types";
 import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
@@ -88,7 +89,11 @@ export class FolderMirror {
       await this.sync.whenLoaded();
       if (this.stopped) return this.dir;
       await this.reconcile();
-      this.offRemote = this.sync.onRemoteFile((path, f) => this.enqueue(path, () => this.onRemote(path, f)));
+      this.writeMap();
+      this.offRemote = this.sync.onRemoteFile((path, f) => {
+        this.scheduleMap();
+        return this.enqueue(path, () => this.onRemote(path, f));
+      });
       const unwatch = await watch(this.dir, (ev) => this.onDiskEvent(ev.paths), { recursive: true, delayMs: 300 });
       if (this.stopped) {
         unwatch();
@@ -111,6 +116,7 @@ export class FolderMirror {
     this.offRemote?.();
     this.unwatch?.();
     this.timers.forEach((t) => window.clearTimeout(t));
+    window.clearTimeout(this.mapTimer);
     await Promise.all(this.queue.values()).catch(() => {});
     await this.saveState();
   }
@@ -121,6 +127,23 @@ export class FolderMirror {
    */
   private pickDir(): Promise<string> {
     return invoke<string>("room_dir", { slug: roomSlug(this.room.name), roomId: this.room.id });
+  }
+
+  // ── mapa da sala (.gfs/MAPA.md): índice nome@linha para o Claude ler pouco ──
+
+  private mapTimer: number | undefined;
+
+  private scheduleMap() {
+    window.clearTimeout(this.mapTimer);
+    this.mapTimer = window.setTimeout(() => this.writeMap(), 5000);
+  }
+
+  private writeMap() {
+    if (this.stopped) return;
+    const files = this.sync.remoteFiles().map((f): [string, string] => [f.path, f.content]);
+    void (async () => writeTextFile(await join(this.dir, ".gfs", "MAPA.md"), buildMap(files, this.room.name)))().catch((e) =>
+      console.warn("mapa da sala:", e),
+    );
   }
 
   // ── estado em disco (formato do gfs) ───────────────────────────────────

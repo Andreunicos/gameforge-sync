@@ -10,6 +10,7 @@ e o que os outros mudam aparece aqui. Não precisa rodar nenhum comando.
 
 ## Como trabalhar
 - Mexa só no necessário. Ache o trecho com busca e leia só ele (não leia arquivos inteiros à toa).
+- Antes de abrir um arquivo, consulte .gfs/MAPA.md (funções com nome@linha): ache o nome e leia só aquelas linhas.
 - Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
 - Achou marcadores <<<<<<< ======= >>>>>>> num arquivo: é conflito. Junte as duas versões e apague os marcadores.
 
