@@ -34,7 +34,10 @@ export function buildMap(files: [path: string, text: string][], roomName: string
     .map(([p, t]) => {
       bytes += t.length;
       const size = t.length > 50_000 ? `, ${Math.round(t.length / 1000)}KB` : "";
-      return `${p} (${t.split("\n").length}L${size}) ${symbols(p, t).join(" ")}`.trimEnd();
+      const lines = t.split("\n");
+      // Linha gigante = dado em texto (música/imagem em base64): uma busca nele devolve MBs. Avisa o Claude.
+      if (lines.some((l) => l.length > 100_000)) return `${p} (${lines.length}L${size}) ⚠ DADOS em texto, não busque nem abra`;
+      return `${p} (${lines.length}L${size}) ${symbols(p, t).join(" ")}`.trimEnd();
     });
   const head = `# MAPA da sala "${roomName}"
 Índice gerado do código (nome@linha). Use assim: ache o nome aqui, depois leia só as linhas dele (Read com offset/limit). Não abra arquivo inteiro.
