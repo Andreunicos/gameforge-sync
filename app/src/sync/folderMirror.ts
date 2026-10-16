@@ -4,11 +4,12 @@
 //
 // Usa o mesmo formato do gfs (.gfs/state.json + .gfs/base/), então o gfs funciona na mesma pasta
 // quando o app estiver fechado.
-import { exists, mkdir, readDir, readTextFile, remove, watch, writeTextFile, type UnwatchFn } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readDir, readTextFile, remove, watch, writeFile, writeTextFile, type UnwatchFn } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import { doc, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
+import { watchBugImgs } from "../bugimgs";
 import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
 import { MAX_BIG_BYTES, kb, utf8Bytes } from "../bigfile";
@@ -63,6 +64,8 @@ export class FolderMirror {
   private lastActivity = new Map<string, number>();
   private unwatch?: UnwatchFn;
   private offRemote?: () => void;
+  private offImgs?: () => void;
+  private imgsBusy: Promise<void> = Promise.resolve();
   private saveTimer: number | undefined;
   private stopped = false;
   private backups = 0;
@@ -94,10 +97,14 @@ export class FolderMirror {
         this.scheduleMap();
         return this.enqueue(path, () => this.onRemote(path, f));
       });
+      this.offImgs = watchBugImgs(this.room.id, (imgs) => {
+        this.imgsBusy = this.imgsBusy.then(() => this.syncImgs(imgs)).catch((e) => console.warn("imagens dos bugs na pasta:", e));
+      });
       const unwatch = await watch(this.dir, (ev) => this.onDiskEvent(ev.paths), { recursive: true, delayMs: 300 });
       if (this.stopped) {
         unwatch();
         this.offRemote();
+        this.offImgs?.();
         return this.dir;
       }
       this.unwatch = unwatch;
@@ -114,6 +121,7 @@ export class FolderMirror {
     this.stopped = true;
     if (this.unwatch) this.sync.setClaude(false);
     this.offRemote?.();
+    this.offImgs?.();
     this.unwatch?.();
     this.timers.forEach((t) => window.clearTimeout(t));
     window.clearTimeout(this.mapTimer);
@@ -144,6 +152,20 @@ export class FolderMirror {
     void (async () => writeTextFile(await join(this.dir, ".gfs", "MAPA.md"), buildMap(files, this.room.name)))().catch((e) =>
       console.warn("mapa da sala:", e),
     );
+  }
+
+  // ── imagens da lista de bugs: .gfs/bugs/<id>.jpg (nunca sobem; somem quando o item é resolvido) ──
+
+  private async syncImgs(imgs: { id: string; data: string }[]) {
+    if (this.stopped) return;
+    const d = await join(this.dir, ".gfs", "bugs");
+    await mkdir(d, { recursive: true });
+    const have = new Set((await readDir(d)).map((e) => e.name));
+    const want = new Set(imgs.map((i) => `${i.id}.jpg`));
+    for (const i of imgs) {
+      if (!have.has(`${i.id}.jpg`)) await writeFile(await join(d, `${i.id}.jpg`), Uint8Array.from(atob(i.data), (c) => c.charCodeAt(0)));
+    }
+    for (const n of have) if (n.endsWith(".jpg") && !want.has(n)) await remove(await join(d, n));
   }
 
   // ── estado em disco (formato do gfs) ───────────────────────────────────

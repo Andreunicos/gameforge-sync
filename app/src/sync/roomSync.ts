@@ -218,6 +218,28 @@ export class RoomSync {
     this.open(path);
   }
 
+  /** Acrescenta `text` ao fim do arquivo (cria com `header` na frente se ainda não existir). */
+  async appendToFile(path: string, text: string, header = "") {
+    const open = this.sessions.get(path);
+    if (open) {
+      // Arquivo aberto no editor: entra como edição local (passa pelo merge normal).
+      const d = open.view.state.doc;
+      const nl = d.length && d.sliceString(d.length - 1) !== "\n" ? "\n" : "";
+      open.view.dispatch({ changes: { from: d.length, insert: nl + text } });
+      return;
+    }
+    const ref = doc(db, "rooms", this.roomId, "files", fileDocId(path));
+    let writes = 0;
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const cur = snap.exists() ? (snap.data().content as string) : header;
+      const nl = cur && !cur.endsWith("\n") ? "\n" : "";
+      const version = snap.exists() ? (snap.data().version as number) + 1 : 1;
+      writes = putFile(tx, this.roomId, path, cur + nl + text, version, this.author, snap);
+    });
+    countWrite(writes);
+  }
+
   async deleteFile(path: string) {
     const s = this.sessions.get(path);
     if (s) {

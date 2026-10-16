@@ -2,12 +2,19 @@
 // em toda conversa, então cada linha aqui custa token em toda tarefa.
 // (Mantenha igual a gfs/src/templates.ts.)
 
+// Linha da regra de ideias/bugs sobre imagens (o app também a acrescenta em salas que já têm a regra sem ela).
+export const IMG_RULE = "- Item com `🖼 .gfs/bugs/x.jpg`: veja a imagem (Read) como referência; ela some sozinha quando você apagar o item.\n";
+
 export const ROOM_CLAUDE_MD = `# Sala do GameForge Sync — regras para o Claude
 
 Esta pasta é uma sala compartilhada: outras pessoas e os Claudes delas editam este jogo AO MESMO TEMPO.
 Com o app GameForge Sync aberto, a pasta sincroniza sozinha: o que você salva aparece para todos em segundos,
 e o que os outros mudam aparece aqui. Não precisa rodar nenhum comando.
 
+## Ideias e bugs (OBRIGATÓRIO)
+- No começo de TODA tarefa, leia IDEIAS_E_BUGS.md (lista que os testadores mandam pelo app). Se tiver itens, trate-os junto com o pedido.
+- Quando um item estiver feito e conferido, APAGUE a linha dele do arquivo (não marque, apague). O que não resolveu fica.
+${IMG_RULE}
 ## Como trabalhar
 - Mexa só no necessário. Ache o trecho com busca e leia só ele (não leia arquivos inteiros à toa).
 - Antes de abrir um arquivo, consulte .gfs/MAPA.md (funções com nome@linha): ache o nome e leia só aquelas linhas.

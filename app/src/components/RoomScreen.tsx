@@ -18,6 +18,8 @@ import { FolderMirror, type MirrorStatus } from "../sync/folderMirror";
 import { Toasts } from "./Toasts";
 import { HistoryPanel } from "./HistoryPanel";
 import { BuildPanel } from "./BuildPanel";
+import { BugsPanel } from "./BugsPanel";
+import { BUGS_FILE, cleanBugImgs } from "../bugimgs";
 import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
 
@@ -89,7 +91,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | null>(null);
   const build = useSyncExternalStore(onBuild, () => buildState(room.id));
   const building = build.phase === "enviando" || build.phase === "compilando" || build.phase === "baixando";
   const [showPreview, setShowPreview] = useState(true);
@@ -182,6 +184,22 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync]);
 
+  // Imagens da lista de bugs: quando o Claude apaga o item do IDEIAS_E_BUGS.md, a imagem dele é apagada.
+  useEffect(() => {
+    if (readOnly) return;
+    let t: number | undefined;
+    const off = sync.onRemoteFile((path, f) => {
+      if (path !== BUGS_FILE || f?.parts) return;
+      window.clearTimeout(t);
+      t = window.setTimeout(() => void cleanBugImgs(room.id, f?.content ?? "").catch((e) => console.warn("limpar imagens:", e)), 4000);
+    });
+    return () => {
+      off();
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync]);
+
   const others = useMemo(() => state.people.filter((p) => p.uid !== user.uid), [state.people, user.uid]);
 
   return (
@@ -225,6 +243,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
             {building ? "⚙️ Build…" : build.phase === "pronto" ? "🔨 Build ✅" : "🔨 Build"}
           </button>
         )}
+        {!readOnly && (
+          <button onClick={() => setModal("bugs")} title="Anotar bugs e ideias do teste: o Claude lê e resolve">
+            🐞 Bugs
+          </button>
+        )}
         <button onClick={() => setModal("history")} title="Tudo o que cada pessoa e cada Claude mudou, e os backups do jogo">
           🕘 Histórico
         </button>
@@ -266,6 +289,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           onClose={() => setModal(null)}
         />
       )}
+      {modal === "bugs" && <BugsPanel roomId={room.id} sync={sync} me={authorOf(user)} onClose={() => setModal(null)} />}
       {modal === "history" && (
         <HistoryPanel room={room} sync={sync} me={authorOf(user)} readOnly={readOnly} people={state.people} onClose={() => setModal(null)} />
       )}

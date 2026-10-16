@@ -164,6 +164,17 @@ service cloud.firestore {
         allow delete: if isOwner(roomId);
       }
 
+      // ── imagens temporárias da lista de bugs (somem quando o item é resolvido) ──
+      match /bugimgs/{imgId} {
+        allow read: if isMember(roomId);
+        allow create: if canEdit(roomId)
+          && request.resource.data.keys().hasOnly(['data', 'ts'])
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 800000
+          && request.resource.data.ts is int;
+        allow delete: if canEdit(roomId);
+      }
+
       // ── reservas por função (Fase 3, usadas pelo gfs claim) ──
       match /claims/{claimId} {
         allow read: if isMember(roomId);
