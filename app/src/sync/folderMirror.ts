@@ -19,7 +19,7 @@ import type { Author, RemoteFile, Room } from "../types";
 import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
 import { hasConflictMarkers, merge3 } from "./merge";
-import { ROOM_CLAUDE_MD, ROOM_GAME_MD } from "./templates";
+import { MODELOS_RULE, ROOM_CLAUDE_MD, ROOM_GAME_MD, ROOM_MODELOS_MD } from "./templates";
 
 const TEXT_EXT = /\.(html?|js|mjs|cjs|ts|css|json|txt|md|csv|xml|svg|glsl|frag|vert)$/i;
 const IGNORE = /(^|\/)(\.gfs|\.git|\.claude|\.vscode|node_modules|dist|android|ios|builds)(\/|$)/; // builds\ = saída do botão BUILD
@@ -300,10 +300,15 @@ export class FolderMirror {
       for (const [p, text] of [
         ["CLAUDE.md", ROOM_CLAUDE_MD],
         ["GAME.md", ROOM_GAME_MD],
+        ["MODELOS.md", ROOM_MODELOS_MD],
       ] as const) {
         if (remote.has(p) || (await this.readDisk(p)) !== null) continue;
         await this.writeDisk(p, text);
         await this.enqueue(p, () => this.push(p));
+      }
+      // Salas antigas: o CLAUDE.md delas ainda não manda ler o MODELOS.md.
+      if (remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("MODELOS.md")) {
+        await this.sync.appendToFile("CLAUDE.md", "\n" + MODELOS_RULE, "", "MODELOS.md").catch((e) => console.warn("regra MODELOS.md:", e));
       }
     }
   }

@@ -8,7 +8,7 @@ import { commit, data, FsError, getDoc, presence, runQuery } from "./firestore.t
 import { hasConflictMarkers, merge3 } from "./merge.ts";
 import { diffStats } from "./diff.ts";
 import { Workspace, type FileState } from "./workspace.ts";
-import { ROOM_CLAUDE_MD, ROOM_GAME_MD } from "./templates.ts";
+import { ROOM_CLAUDE_MD, ROOM_GAME_MD, ROOM_MODELOS_MD } from "./templates.ts";
 import { INSTALL_CMD, LATEST_JSON, VERSION } from "./config.ts";
 import { mapCommand } from "./map.ts";
 import { blobDocId, isBig, kb, MAX_BIG_BYTES, splitParts, utf8Bytes } from "./bigfile.ts";
@@ -224,6 +224,7 @@ async function cmdClone(roomId: string | undefined, folder: string | undefined) 
     for (const [path, text] of [
       ["CLAUDE.md", ROOM_CLAUDE_MD],
       ["GAME.md", ROOM_GAME_MD],
+      ["MODELOS.md", ROOM_MODELOS_MD],
     ] as const) {
       if (ws.state.files[path]) continue;
       ws.writeLocal(path, text);
