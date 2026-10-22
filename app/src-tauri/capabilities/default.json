@@ -14,7 +14,11 @@
     "allow-room-dir",
     "allow-download-asset",
     "allow-write-build-file",
-    "allow-reveal-build"
+    "allow-reveal-build",
+    "allow-rojo-start",
+    "allow-rojo-stop",
+    "allow-rojo-info",
+    "allow-rojo-install"
   ],
   "remote": {
     "urls": [

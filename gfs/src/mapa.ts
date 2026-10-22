@@ -1,7 +1,7 @@
 // Mapa da sala: um índice curto de cada arquivo (tamanho, funções e linhas), gerado do código, sem IA.
 // O Claude lê o mapa em vez de abrir arquivo inteiro: acha o trecho e lê só aquelas linhas.
 // Vai para .gfs/MAPA.md (não sincroniza: cada máquina gera o seu, é de graça).
-// Função pura, sem dependências. Mantenha igual a app/src/sync/mapa.ts.
+// Função pura, sem dependências. Mantenha igual a gfs/src/mapa.ts.
 
 const MAX_SYMBOLS = 60; // shortcut: arquivo com mais símbolos que isso mostra só os primeiros; subir se faltar
 const NOT_NAMES = new Set(["if", "for", "while", "switch", "catch", "return"]);
@@ -13,14 +13,19 @@ const JS = [
   /^ {0,2}(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s*)?(?:\(|function|[\w$]+\s*=>|\{|\[)/, // const x = (..)=> / { / [ (ignora const N = 600)
 ];
 
+// Luau: function Nome( / local function nome( / function Mod.nome( / function Mod:nome(
+const LUAU = /^\s{0,2}(?:local\s+)?function\s+([\w.:]+)/;
+
 function symbols(path: string, text: string): string[] {
   const out: string[] = [];
   const keep = (name: string, n: number) => out.length < MAX_SYMBOLS && !NOT_NAMES.has(name) && out.push(`${name}@${n}`);
   const isJs = /\.(m?js|cjs|ts)$/i.test(path);
+  const isLuau = /\.luau?$/i.test(path);
   const isMd = /\.md$/i.test(path);
   const isHtml = /\.html?$/i.test(path);
   text.split("\n").forEach((l, i) => {
     if (isJs) for (const re of JS) { const m = re.exec(l); if (m) { keep(m[1], i + 1); break; } }
+    else if (isLuau) { const m = LUAU.exec(l); if (m) keep(m[1], i + 1); }
     else if (isMd) { const m = /^#{1,3}\s+(.+)/.exec(l); if (m) keep(m[1].trim().slice(0, 50), i + 1); }
     else if (isHtml) { const m = /<script[^>]*\ssrc="([^"]+)"/.exec(l); if (m) keep(m[1], i + 1); }
   });

@@ -1,5 +1,6 @@
 import type { Timestamp } from "firebase/firestore";
 
+export type RoomKind = "html5" | "roblox";
 export type Role = "owner" | "editor" | "viewer";
 
 export interface Room {
@@ -10,6 +11,8 @@ export interface Room {
   roles: Record<string, Role>;
   names: Record<string, string>;
   minAppVersion: string;
+  /** Tipo da sala; ausente = html5 (salas antigas). */
+  kind?: RoomKind;
   /** URL base dos assets (ex.: GitHub Pages do repo do jogo); o preview usa como <base href>. */
   assetsBase: string;
   inviteCode?: string;

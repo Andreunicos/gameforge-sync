@@ -19,7 +19,7 @@ import { db } from "./firebase";
 import { displayName } from "./auth";
 import { countWrite } from "./usage";
 import { APP_VERSION } from "./config";
-import type { ActivityEvent, Author, Role, Room } from "./types";
+import type { ActivityEvent, Author, Role, Room, RoomKind } from "./types";
 
 export function authorOf(user: User): Author {
   return { uid: user.uid, name: displayName(user), kind: "human" };
@@ -78,7 +78,7 @@ export function watchRoom(roomId: string, cb: (room: Room | null) => void, onErr
   );
 }
 
-export async function createRoom(user: User, name: string): Promise<string> {
+export async function createRoom(user: User, name: string, kind: RoomKind = "html5"): Promise<string> {
   const ref = doc(collection(db, "rooms"));
   await setDoc(ref, {
     name,
@@ -87,6 +87,7 @@ export async function createRoom(user: User, name: string): Promise<string> {
     roles: { [user.uid]: "owner" },
     names: { [user.uid]: displayName(user) },
     minAppVersion: APP_VERSION,
+    kind,
     assetsBase: "",
     createdAt: serverTimestamp(),
   });

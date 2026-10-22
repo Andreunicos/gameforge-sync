@@ -19,6 +19,8 @@ import { Toasts } from "./Toasts";
 import { HistoryPanel } from "./HistoryPanel";
 import { BuildPanel } from "./BuildPanel";
 import { BugsPanel } from "./BugsPanel";
+import { RojoPanel } from "./RojoPanel";
+import { useRojo } from "../rojo";
 import { BUGS_FILE, cleanBugImgs } from "../bugimgs";
 import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
@@ -91,10 +93,20 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | null>(null);
   const build = useSyncExternalStore(onBuild, () => buildState(room.id));
   const building = build.phase === "enviando" || build.phase === "compilando" || build.phase === "baixando";
-  const [showPreview, setShowPreview] = useState(true);
+  const isRoblox = room.kind === "roblox";
+  const [showPreview, setShowPreview] = useState(!isRoblox);
+  const rojo = useRojo(sync, isRoblox && isTauri());
+  // Sala de Roblox em PC sem Rojo: abre o painel com o botão de instalar (uma vez).
+  const askedRojo = useRef(false);
+  useEffect(() => {
+    if (rojo.info?.version === null && !readOnly && !askedRojo.current) {
+      askedRojo.current = true;
+      setModal("rojo");
+    }
+  }, [rojo.info, readOnly]);
   const writes = useSyncExternalStore(onWrites, writesToday);
 
   useEffect(() => {
@@ -116,6 +128,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     mirrorRef.current = m;
     try {
       await m.start();
+      if (isRoblox) rojo.start(m.dir);
       try {
         localStorage.setItem(mirrorKey, "1");
       } catch {
@@ -140,6 +153,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     return () => {
       const m = mirrorRef.current;
       mirrorRef.current = null;
+      if (isRoblox && m?.dir) void invoke("rojo_stop", { dir: m.dir }).catch(() => {});
       void m?.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,6 +166,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   };
 
   const stopMirror = async () => {
+    await rojo.stop();
     const m = mirrorRef.current;
     mirrorRef.current = null;
     await m?.stop();
@@ -235,10 +250,23 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         >
           ✎ {writes.toLocaleString("pt-BR")} / {DAILY_WRITE_LIMIT.toLocaleString("pt-BR")}
         </span>
-        <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
-          {showPreview ? "◧ Preview" : "◻ Preview"}
-        </button>
-        {!readOnly && (
+        {!isRoblox && (
+          <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
+            {showPreview ? "◧ Preview" : "◻ Preview"}
+          </button>
+        )}
+        {isRoblox && !readOnly && isTauri() && (
+          <button onClick={() => setModal("rojo")} title="Servidor do Rojo desta sala (conecta o Roblox Studio)">
+            🧩 Rojo{" "}
+            <span className="dot" style={{ background: rojo.servers.some((x) => x.state === "error") ? "#e5484d" : rojo.servers.some((x) => x.state === "on") ? "var(--ok)" : "#888", display: "inline-block" }} />
+          </button>
+        )}
+        {isRoblox && !readOnly && rojo.info?.version === null && (
+          <button className="primary" onClick={() => setModal("rojo")} title="O Rojo não está instalado neste PC">
+            ⬇️ Instalar Rojo
+          </button>
+        )}
+        {!isRoblox && !readOnly && (
           <button className={building ? "building" : ""} onClick={() => setModal("build")} title="Gerar o jogo para Web, Android, Windows e Linux">
             {building ? "⚙️ Build…" : build.phase === "pronto" ? "🔨 Build ✅" : "🔨 Build"}
           </button>
@@ -286,6 +314,22 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           sync={sync}
           me={authorOf(user)}
           isAdmin={user.email === "andreluizvillanova123@gmail.com"}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "rojo" && (
+        <RojoPanel
+          servers={rojo.servers}
+          info={rojo.info}
+          install={rojo.install}
+          onInstall={() => void rojo.installRojo()}
+          onRestart={() => {
+            const dir = mirrorRef.current?.dir;
+            if (dir) rojo.start(dir);
+            else void startMirror().catch(() => {});
+          }}
+          onStop={rojo.stop}
+          onAddPlace={rojo.addPlace}
           onClose={() => setModal(null)}
         />
       )}

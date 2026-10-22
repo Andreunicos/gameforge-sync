@@ -29,6 +29,12 @@ Você não troca o modelo da sessão sozinho, mas troca DELEGANDO: use a ferrame
 - Diga ao usuário em UMA linha o que escolheu, ex.: "Modelo: Sonnet (tarefa normal)".
 `;
 
+// Seção de ideias/bugs (igual nos CLAUDE.md de todos os tipos de sala; o BugsPanel também a usa).
+export const BUGS_SECTION = `## Ideias e bugs (OBRIGATÓRIO)
+- No começo de TODA tarefa, leia IDEIAS_E_BUGS.md (lista que os testadores mandam pelo app). Se tiver itens, trate-os junto com o pedido.
+- Quando um item estiver feito e conferido, APAGUE a linha dele do arquivo (não marque, apague). O que não resolveu fica.
+${IMG_RULE}`;
+
 export const ROOM_CLAUDE_MD = `# Sala do GameForge Sync — regras para o Claude
 
 Esta pasta é uma sala compartilhada: outras pessoas e os Claudes delas editam este jogo AO MESMO TEMPO.
@@ -36,10 +42,7 @@ Com o app GameForge Sync aberto, a pasta sincroniza sozinha: o que você salva a
 e o que os outros mudam aparece aqui. Não precisa rodar nenhum comando.
 
 ${MODELOS_RULE}
-## Ideias e bugs (OBRIGATÓRIO)
-- No começo de TODA tarefa, leia IDEIAS_E_BUGS.md (lista que os testadores mandam pelo app). Se tiver itens, trate-os junto com o pedido.
-- Quando um item estiver feito e conferido, APAGUE a linha dele do arquivo (não marque, apague). O que não resolveu fica.
-${IMG_RULE}
+${BUGS_SECTION}
 ## Como trabalhar
 - Mexa só no necessário. Ache o trecho com busca e leia só ele (não leia arquivos inteiros à toa).
 - Antes de abrir um arquivo, consulte .gfs/MAPA.md (funções com nome@linha): ache o nome e leia só aquelas linhas.
@@ -72,3 +75,99 @@ export const ROOM_GAME_MD = `# GAME.md — visão do jogo
 ## Decisões já tomadas
 -
 `;
+
+// ── Salas de Roblox (Rojo) ───────────────────────────────────────────────────
+// A sala é o JOGO; cada mapa/local (Lobby, Arena…) é uma pasta com o próprio default.project.json e o próprio `rojo serve` (uma porta cada).
+
+export const ROOM_CLAUDE_MD_ROBLOX = `# Sala do GameForge Sync (Roblox) — regras para o Claude
+
+Esta pasta é uma sala compartilhada de um jogo de Roblox: outras pessoas e os Claudes delas editam AO MESMO TEMPO.
+Com o app GameForge Sync aberto, a pasta sincroniza sozinha e cada local (mapa) tem um servidor do Rojo ligado pelo app,
+que manda para o Roblox Studio tudo o que você salva. Não precisa rodar nenhum comando.
+
+${MODELOS_RULE}
+${BUGS_SECTION}
+## Como trabalhar (Roblox / Luau)
+- Cada LOCAL (mapa/place do Roblox) é uma pasta na raiz, ex.: Lobby/, Arena/. Dentro dela: default.project.json (Rojo) e src/.
+- src/server (ServerScriptService), src/client (StarterPlayerScripts), src/shared (ReplicatedStorage). Escolha o local certo antes de criar arquivo.
+- Nome do arquivo define o tipo: *.server.luau = Script, *.client.luau = LocalScript, *.luau = ModuleScript; init.luau na pasta = a pasta vira o script.
+- Só mexa no default.project.json para criar um mapeamento novo. Local novo: peça à pessoa para criar pelo botão 🧩 Rojo do app.
+- Mapa, workspace e objetos criados no Studio NÃO ficam aqui: só o código. Não invente instâncias que o Studio não tem.
+- Servidor decide, cliente só mostra: nunca confie em dados vindos do cliente (RemoteEvent/RemoteFunction validam tudo no servidor).
+- Você não roda o jogo: o teste é no Studio (Play). Peça à pessoa o erro do Output em vez de adivinhar.
+- Mexa só no necessário. Ache o trecho com busca e leia só ele. Antes de abrir um arquivo, consulte .gfs/MAPA.md (nome@linha).
+- Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
+- Achou marcadores <<<<<<< ======= >>>>>>> num arquivo: é conflito. Junte as duas versões e apague os marcadores.
+
+## Nunca
+- Desfazer ou reescrever código de outra pessoa sem perguntar.
+- Apagar arquivos (peça ao dono da sala).
+- Mexer em arquivos fora do que foi pedido.
+
+## Saber mais
+- Visão do jogo e decisões: GAME.md (leia só quando a tarefa depender de design).
+`;
+
+export const ROOM_GAME_MD_ROBLOX = `# GAME.md — visão do jogo (Roblox)
+
+> Árbitro das decisões de design: em dúvida, siga o que está aqui. Mantenha curto.
+
+## O jogo
+- Gênero:
+- Ideia em 1 frase:
+- Monetização (gamepasses, produtos):
+
+## Locais (mapas / places)
+- (um por pasta: o que cada um é e como o jogador vai de um ao outro)
+
+## Decisões já tomadas
+-
+`;
+
+/** Nome de pasta seguro para um local: sem acento, espaço ou símbolo (vira o nome do projeto Rojo). */
+export function placeFolder(name: string): string {
+  return name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9_-]+/g, "") || "Local";
+}
+
+const robloxProject = (name: string) =>
+  JSON.stringify(
+    {
+      name,
+      tree: {
+        $className: "DataModel",
+        ReplicatedStorage: { $path: "src/shared", $ignoreUnknownInstances: true },
+        ServerScriptService: { $path: "src/server", $ignoreUnknownInstances: true },
+        StarterPlayer: { StarterPlayerScripts: { $path: "src/client", $ignoreUnknownInstances: true } },
+      },
+    },
+    null,
+    2,
+  ) + "\n";
+
+/** Arquivos de um local novo (um projeto Rojo na pasta `<folder>/`). */
+export function placeTemplates(folder: string): [path: string, text: string][] {
+  const hi = (side: string) => `print(${JSON.stringify(`[${folder}] ${side} pronto`)})\n`;
+  return [
+    [`${folder}/default.project.json`, robloxProject(folder)],
+    [`${folder}/src/server/Main.server.luau`, hi("servidor")],
+    [`${folder}/src/client/Main.client.luau`, hi("cliente")],
+    [`${folder}/src/shared/Config.luau`, "return {}\n"],
+  ];
+}
+
+/** Arquivos que a sala nova ganha, conforme o tipo (undefined = HTML5, as salas antigas). */
+export function roomTemplates(kind: string | undefined, roomName: string): [path: string, text: string][] {
+  if (kind === "roblox") {
+    return [
+      ["CLAUDE.md", ROOM_CLAUDE_MD_ROBLOX],
+      ["GAME.md", ROOM_GAME_MD_ROBLOX],
+      ["MODELOS.md", ROOM_MODELOS_MD],
+      ...placeTemplates(placeFolder(roomName)),
+    ];
+  }
+  return [
+    ["CLAUDE.md", ROOM_CLAUDE_MD],
+    ["GAME.md", ROOM_GAME_MD],
+    ["MODELOS.md", ROOM_MODELOS_MD],
+  ];
+}

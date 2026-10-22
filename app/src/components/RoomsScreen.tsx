@@ -3,7 +3,7 @@ import type { User } from "firebase/auth";
 import { go } from "../App";
 import { logout, displayName } from "../auth";
 import { createRoom, deleteRoom, joinWithCode, watchMyRooms } from "../rooms";
-import type { Room } from "../types";
+import type { Room, RoomKind } from "../types";
 import { Brand } from "./Brand";
 import { CartIcon, TrashIcon } from "./PixelArt";
 
@@ -12,6 +12,7 @@ const ROLE_LABEL = { owner: "dono", editor: "editor", viewer: "espectador" } as 
 export function RoomsScreen({ user, initialError }: { user: User; initialError: string | null }) {
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<RoomKind>("html5");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
@@ -94,9 +95,14 @@ Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
           className="row"
           onSubmit={(e) => {
             e.preventDefault();
-            if (name.trim()) void run(() => createRoom(user, name.trim()));
+            if (name.trim()) void run(() => createRoom(user, name.trim(), kind));
           }}
         >
+          <select value={kind} onChange={(e) => setKind(e.target.value as RoomKind)} title="Tipo de jogo da sala">
+            <option value="html5">HTML5</option>
+            <option value="roblox">Roblox (Rojo)</option>
+            <option disabled>Unreal (em breve)</option>
+          </select>
           <input placeholder="Nome do jogo (ex.: Capivaras TD)" value={name} onChange={(e) => setName(e.target.value)} />
           <button className="primary" disabled={busy || !name.trim()}>
             Criar
