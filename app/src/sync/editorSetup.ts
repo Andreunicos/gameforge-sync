@@ -15,8 +15,14 @@ export function languageFor(path: string): Extension {
     case "mjs":
     case "cjs":
       return javascript();
+    case "jsx":
+      return javascript({ jsx: true });
     case "ts":
+    case "mts":
+    case "cts":
       return javascript({ typescript: true });
+    case "tsx":
+      return javascript({ typescript: true, jsx: true });
     case "html":
     case "htm":
       return html();

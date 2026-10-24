@@ -20,9 +20,9 @@ import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
 import { hasConflictMarkers, merge3 } from "./merge";
 import { MODELOS_RULE, roomTemplates } from "./templates";
+import { IGNORE_PATH, UNREAL_IGNORE_PATH, isCodePath } from "./fileKinds";
 
-const TEXT_EXT = /\.(html?|js|mjs|cjs|ts|css|json|txt|md|csv|xml|svg|glsl|frag|vert|luau?|toml)$/i;
-const IGNORE = /(^|\/)(\.gfs|\.git|\.claude|\.vscode|node_modules|dist|android|ios|builds|Packages|ServerPackages)(\/|$)/; // builds\ = saída do botão BUILD
+const IGNORE = IGNORE_PATH; // inclui builds/ = saída do botão BUILD
 const LOCAL_DEBOUNCE_MS = 700;
 const ACTIVITY_EVERY_MS = 3 * 60_000;
 
@@ -79,6 +79,11 @@ export class FolderMirror {
     private onStatus: (s: MirrorStatus) => void,
   ) {
     this.author = { ...human, kind: "claude" };
+  }
+
+  private ignored(rel: string) {
+    // Ponto no começo (.mcp.json, .vs/…) fica fora também no vigia, como já ficava na varredura (scanDisk).
+    return IGNORE.test(rel) || /(^|\/)\./.test(rel) || (this.room.kind === "unreal" && UNREAL_IGNORE_PATH.test(rel));
   }
 
   // ── ciclo de vida ──────────────────────────────────────────────────────
@@ -236,9 +241,9 @@ export class FolderMirror {
     const walk = async (rel: string) => {
       for (const e of await readDir(rel ? await this.abs(rel) : this.dir)) {
         const p = rel ? `${rel}/${e.name}` : e.name;
-        if (IGNORE.test(p) || e.name.startsWith(".")) continue;
+        if (this.ignored(p) || e.name.startsWith(".")) continue;
         if (e.isDirectory) await walk(p);
-        else if (e.isFile && TEXT_EXT.test(e.name)) out.push(p);
+        else if (e.isFile && isCodePath(p)) out.push(p);
       }
     };
     await walk("");
@@ -312,7 +317,7 @@ export class FolderMirror {
   private onDiskEvent(paths: string[]) {
     for (const full of paths) {
       const rel = full.slice(this.dir.length + 1).split("\\").join("/");
-      if (!rel || IGNORE.test(rel) || !TEXT_EXT.test(rel)) continue;
+      if (!rel || this.ignored(rel) || !isCodePath(rel)) continue;
       window.clearTimeout(this.timers.get(rel));
       this.timers.set(
         rel,

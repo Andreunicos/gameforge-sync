@@ -175,11 +175,43 @@ service cloud.firestore {
         allow delete: if canEdit(roomId);
       }
 
-      // ── reservas por função (Fase 3, usadas pelo gfs claim) ──
+      // ── reservas de assets (soft locks, salas Unreal; ver app/src/claims.ts) ──
+      // UM documento 'assets' com c = {chave: reserva}, para a transação do cliente ver a tabela inteira
+      // (sobreposição pasta × arquivo). Cada gravação mexe só na chave k (e pode limpar UMA vencida em g).
+      // Ninguém toma reserva ativa de outra pessoa; liberar a de outro só se venceu ou se é o dono da sala.
       match /claims/{claimId} {
         allow read: if isMember(roomId);
-        allow create, update: if canEdit(roomId) && request.resource.data.owner.uid == request.auth.uid;
-        allow delete: if canEdit(roomId);
+        allow create, update: if claimId == 'assets' && canEdit(roomId) && validClaims(roomId);
+        allow delete: if isOwner(roomId);
+
+        function validClaims(roomId) {
+          let d = request.resource.data;
+          let before = resource == null ? {} : resource.data.c;
+          let after = d.c;
+          let k = d.k;
+          let g = d.get('g', k);
+          let old = before.get(k, null);
+          let mine = after.get(k, null);
+          return d.keys().hasOnly(['c', 'k', 'g'])
+            && k is string && k.size() > 0 && k.size() <= 300
+            && g is string
+            && after is map && after.size() <= 500
+            && after.diff(before).affectedKeys().hasOnly([k, g])
+            && (g == k || !(g in before) || (!(g in after) && before[g].exp < request.time))
+            && (old == null || old.uid == request.auth.uid || old.exp < request.time || (mine == null && isOwner(roomId)))
+            && (mine == null || validClaim(mine));
+        }
+
+        function validClaim(e) {
+          return e.keys().hasOnly(['path', 'uid', 'name', 'note', 'exp'])
+            && e.uid == request.auth.uid
+            && e.path is string && e.path.size() <= 300
+            && e.name is string && e.name.size() <= 80
+            && e.note is string && e.note.size() <= 200
+            && e.exp is timestamp
+            && e.exp > request.time
+            && e.exp < request.time + duration.value(13, 'h');
+        }
       }
 
       // ── chat da sala (Fase 3) ──

@@ -124,6 +124,63 @@ export const ROOM_GAME_MD_ROBLOX = `# GAME.md — visão do jogo (Roblox)
 -
 `;
 
+// ── Salas de Unreal Engine ───────────────────────────────────────────────────
+// A pasta da sala É a raiz do projeto: o código (texto) sincroniza com merge; Content/ (binário) vem por fora
+// e é protegido por reservas (rooms/{id}/claims/assets), que o app escreve em .gfs/ASSETS.md.
+
+export const ROOM_CLAUDE_MD_UNREAL = `# Sala do GameForge Sync (Unreal Engine 5.8.1) — regras para o Claude
+
+Esta pasta é a raiz de um projeto Unreal 5.8.1 compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
+Com o app GameForge Sync aberto, o CÓDIGO sincroniza sozinho em segundos: Source/, Config/, *.uproject, Plugins/*/Source,
+Content/Python, shaders .usf/.ush. NÃO sincronizam por aqui: Content/ (.uasset/.umap), Binaries/, Intermediate/, Saved/, DerivedDataCache/.
+
+${MODELOS_RULE}
+${BUGS_SECTION}
+## Assets (.uasset/.umap): reserva OBRIGATÓRIA
+- Binário não tem merge: duas pessoas no mesmo asset = alguém perde trabalho.
+- Antes de criar, salvar, mover, renomear ou apagar QUALQUER coisa de Content/ (pelo editor, por ferramenta MCP, por script Python), leia .gfs/ASSETS.md.
+- Só mexa no que está reservado para VOCÊ. Reservado por outra pessoa: não toque, avise. Sem reserva: peça à pessoa para reservar no botão 🔒 Unreal do app.
+- .gfs/ASSETS.md só vale com o app aberto. App fechado = não mexa em asset.
+- Nunca abra nem "conserte" .uasset/.umap como texto.
+
+## Como trabalhar (C++ / Python / INI)
+- Código em texto tem merge automático: não precisa reservar. Mexa só no necessário; consulte .gfs/MAPA.md (nome@linha) e leia só aquelas linhas.
+- Mudou .h (UCLASS/UPROPERTY/UFUNCTION), .Build.cs, .Target.cs ou criou arquivo C++: precisa recompilar com o editor fechado (Live Coding não pega). Avise a pessoa.
+- Config/*.ini: mude só a chave necessária, na seção certa. Default*.ini vale para todos.
+- Você não roda o editor nem o jogo: peça à pessoa o erro do Output Log ou da compilação em vez de adivinhar.
+- Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
+- Achou marcadores <<<<<<< ======= >>>>>>> num arquivo: é conflito. Junte as duas versões e apague os marcadores.
+
+## Nunca
+- Nada destrutivo: apagar ou limpar pastas (Content, Binaries, Intermediate, Saved, DerivedDataCache), git clean/reset, Fix Up Redirectors, resave, migrar ou renomear assets em lote.
+- Compilar, empacotar ou rodar scripts que mexem no projeto inteiro sem a pessoa pedir.
+- Desfazer ou reescrever código de outra pessoa sem perguntar.
+- Apagar arquivos (peça ao dono da sala).
+- Mexer em arquivos fora do que foi pedido.
+
+## Saber mais
+- Visão do jogo e decisões: GAME.md (leia só quando a tarefa depender de design).
+`;
+
+export const ROOM_GAME_MD_UNREAL = `# GAME.md — visão do jogo (Unreal Engine 5.8.1)
+
+> Árbitro das decisões de design: em dúvida, siga o que está aqui. Mantenha curto.
+
+## O jogo
+- Gênero:
+- Plataforma: (PC / console / celular)
+- Ideia em 1 frase:
+
+## Projeto
+- Módulo principal (Source/<Nome>):
+- O que é C++ e o que é Blueprint:
+- Mapas (Content/Maps) e quem cuida de cada um:
+- Como o Content/ (binários) chega a cada pessoa: (Diversion / Perforce / Git LFS / zip)
+
+## Decisões já tomadas
+-
+`;
+
 /** Nome de pasta seguro para um local: sem acento, espaço ou símbolo (vira o nome do projeto Rojo). */
 export function placeFolder(name: string): string {
   return name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9_-]+/g, "") || "Local";
@@ -163,6 +220,13 @@ export function roomTemplates(kind: string | undefined, roomName: string): [path
       ["GAME.md", ROOM_GAME_MD_ROBLOX],
       ["MODELOS.md", ROOM_MODELOS_MD],
       ...placeTemplates(placeFolder(roomName)),
+    ];
+  }
+  if (kind === "unreal") {
+    return [
+      ["CLAUDE.md", ROOM_CLAUDE_MD_UNREAL],
+      ["GAME.md", ROOM_GAME_MD_UNREAL],
+      ["MODELOS.md", ROOM_MODELOS_MD],
     ];
   }
   return [

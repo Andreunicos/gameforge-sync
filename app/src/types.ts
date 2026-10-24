@@ -1,6 +1,6 @@
 import type { Timestamp } from "firebase/firestore";
 
-export type RoomKind = "html5" | "roblox";
+export type RoomKind = "html5" | "roblox" | "unreal";
 export type Role = "owner" | "editor" | "viewer";
 
 export interface Room {

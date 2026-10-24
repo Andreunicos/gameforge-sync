@@ -1,12 +1,10 @@
 import { useRef, useState } from "react";
 import type { RoomSync, RoomSyncState } from "../sync/roomSync";
-
-const TEXT_EXT = /\.(html?|js|mjs|cjs|ts|css|json|txt|md|csv|xml|svg|glsl|frag|vert)$/i;
-const IGNORE = /(^|\/)(node_modules|\.git|dist|android|ios)(\/|$)/;
+import { IGNORE_PATH, SECRET_PATH, isCodePath } from "../sync/fileKinds";
 
 function extClass(path: string) {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  if (["js", "mjs", "cjs", "ts"].includes(ext)) return ["js", "JS"];
+  if (["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"].includes(ext)) return ["js", "JS"];
   if (["html", "htm"].includes(ext)) return ["html", "<>"];
   if (ext === "css") return ["css", "CSS"];
   if (ext === "json") return ["json", "{}"];
@@ -58,15 +56,21 @@ export function FileList({
 
   const importFolder = async (list: HTMLInputElement["files"]) => {
     if (!list?.length) return;
-    const files = Array.from(list).filter((f) => {
-      const rel = f.webkitRelativePath.split("/").slice(1).join("/");
-      return TEXT_EXT.test(rel) && !IGNORE.test(rel);
-    });
+    const rels = Array.from(list, (f) => f.webkitRelativePath.split("/").slice(1).join("/"));
+    const files = Array.from(list).filter((_, i) => !IGNORE_PATH.test(rels[i]) && isCodePath(rels[i]));
+    const secrets = rels.filter((r) => !IGNORE_PATH.test(r) && SECRET_PATH.test(r));
     if (!files.length) {
-      toast("Nenhum arquivo de código (html, js, css, json…) nessa pasta.", "warn");
+      toast("Nenhum arquivo de código reconhecido nessa pasta (py, ts, tsx, ps1, js, html, json, c#, java…).", "warn");
       return;
     }
-    if (!confirm(`Importar ${files.length} arquivo(s) de código? Os que já existem na sala serão substituídos.\n\nImagens e sons não vão: eles ficam no repositório do jogo no GitHub.`))
+    if (
+      !confirm(
+        `Importar ${files.length} arquivo(s) de código? Os que já existem na sala serão substituídos.\n\n` +
+          `Isso gasta cerca de ${files.length * 2} das 20 mil gravações grátis do dia.\n` +
+          `Imagens, sons e binários não vão: ficam no repositório do jogo no GitHub.` +
+          (secrets.length ? `\n\nFicam de fora por parecerem segredo (senha/chave): ${secrets.slice(0, 5).join(", ")}${secrets.length > 5 ? "…" : ""}` : ""),
+      )
+    )
       return;
     setImporting(`0/${files.length}`);
     try {
@@ -124,7 +128,7 @@ export function FileList({
                 <button className="primary" onClick={() => folderInput.current?.click()}>
                   📁 Importar pasta de um jogo
                 </button>
-                <span className="small muted">Escolha a pasta do jogo no PC. Vai só o código (html, js, css, json).</span>
+                <span className="small muted">Escolha a pasta do projeto no PC. Vai só o código em texto (qualquer linguagem); imagens, sons e binários ficam de fora.</span>
                 <button onClick={() => void sync.createFile("index.html", STARTER_HTML).catch((e: Error) => toast(e.message))}>
                   ✨ Começar do zero
                 </button>

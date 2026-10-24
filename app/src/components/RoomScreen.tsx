@@ -20,7 +20,9 @@ import { HistoryPanel } from "./HistoryPanel";
 import { BuildPanel } from "./BuildPanel";
 import { BugsPanel } from "./BugsPanel";
 import { RojoPanel } from "./RojoPanel";
+import { UnrealPanel } from "./UnrealPanel";
 import { useRojo } from "../rojo";
+import { assetsMd, hhmm, useClaims, writeAssetsMd } from "../claims";
 import { BUGS_FILE, cleanBugImgs } from "../bugimgs";
 import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
@@ -93,11 +95,14 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | "unreal" | null>(null);
   const build = useSyncExternalStore(onBuild, () => buildState(room.id));
   const building = build.phase === "enviando" || build.phase === "compilando" || build.phase === "baixando";
   const isRoblox = room.kind === "roblox";
-  const [showPreview, setShowPreview] = useState(!isRoblox);
+  const isUnreal = room.kind === "unreal";
+  const isHtml5 = !isRoblox && !isUnreal; // kind ausente = html5 (salas antigas)
+  const [showPreview, setShowPreview] = useState(isHtml5);
+  const claims = useClaims(room.id, isUnreal);
   const rojo = useRojo(sync, isRoblox && isTauri());
   // Sala de Roblox em PC sem Rojo: abre o painel com o botão de instalar (uma vez).
   const askedRojo = useRef(false);
@@ -215,6 +220,34 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync]);
 
+  // Sala Unreal: reservas de assets em .gfs/ASSETS.md (só reescreve quando a lista muda) e avisos para quem reservou.
+  const md = useMemo(() => (isUnreal ? assetsMd(claims.list, user.uid, claims.now) : ""), [isUnreal, claims.list, claims.now, user.uid]);
+  const mirrorDir = mirror?.state === "on" ? mirror.dir : undefined;
+  useEffect(() => {
+    if (md && mirrorDir) void writeAssetsMd(mirrorDir, md).catch((e) => console.warn("ASSETS.md:", e));
+  }, [md, mirrorDir]);
+  const warned = useRef(new Set<string>());
+  const mineBefore = useRef(new Map<string, number>()); // minhas reservas na última lista: chave → vencimento
+  useEffect(() => {
+    if (!isUnreal) return;
+    const toast = (kind: Toast["kind"], text: string, id: string) => {
+      if (warned.current.has(id)) return;
+      warned.current.add(id);
+      sync.onToast({ kind, text });
+    };
+    const { list, now } = claims;
+    for (const c of list) {
+      if (c.uid === user.uid) {
+        const left = c.exp - now;
+        if (left > 0 && left < 10 * 60_000) toast("warn", `Sua reserva de ${c.path} vence às ${hhmm(c.exp)}. Ainda mexendo? Renove no 🔒 Unreal.`, `${c.key}@${c.exp}:soon`);
+        if (left <= 0 && left > -10 * 60_000) toast("warn", `Sua reserva de ${c.path} venceu: outra pessoa já pode reservar. Salve e libere, ou reserve de novo.`, `${c.key}@${c.exp}:gone`);
+      } else if ((mineBefore.current.get(c.key) ?? Infinity) <= now && c.exp > now) {
+        toast("error", `${c.path} agora está reservado por ${c.name} (a sua reserva tinha vencido). NÃO salve por cima: fale com ${c.name}.`, `${c.key}@${c.exp}:lost`);
+      }
+    }
+    mineBefore.current = new Map(list.filter((c) => c.uid === user.uid).map((c) => [c.key, c.exp]));
+  }, [isUnreal, claims.list, claims.now, sync, user.uid]);
+
   const others = useMemo(() => state.people.filter((p) => p.uid !== user.uid), [state.people, user.uid]);
 
   return (
@@ -250,7 +283,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         >
           ✎ {writes.toLocaleString("pt-BR")} / {DAILY_WRITE_LIMIT.toLocaleString("pt-BR")}
         </span>
-        {!isRoblox && (
+        {isHtml5 && (
           <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
             {showPreview ? "◧ Preview" : "◻ Preview"}
           </button>
@@ -266,7 +299,12 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
             ⬇️ Instalar Rojo
           </button>
         )}
-        {!isRoblox && !readOnly && (
+        {isUnreal && (
+          <button onClick={() => setModal("unreal")} title="Reservas de assets (.uasset/.umap) e como a sala Unreal funciona">
+            🔒 Unreal{claims.list.some((c) => c.exp > claims.now) ? ` (${claims.list.filter((c) => c.exp > claims.now).length})` : ""}
+          </button>
+        )}
+        {isHtml5 && !readOnly && (
           <button className={building ? "building" : ""} onClick={() => setModal("build")} title="Gerar o jogo para Web, Android, Windows e Linux">
             {building ? "⚙️ Build…" : build.phase === "pronto" ? "🔨 Build ✅" : "🔨 Build"}
           </button>
@@ -330,6 +368,18 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           }}
           onStop={rojo.stop}
           onAddPlace={rojo.addPlace}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "unreal" && (
+        <UnrealPanel
+          roomId={room.id}
+          me={authorOf(user)}
+          claims={claims.list}
+          now={claims.now}
+          readOnly={readOnly}
+          isOwner={role === "owner"}
+          dir={mirrorDir}
           onClose={() => setModal(null)}
         />
       )}

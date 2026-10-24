@@ -101,7 +101,7 @@ Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
           <select value={kind} onChange={(e) => setKind(e.target.value as RoomKind)} title="Tipo de jogo da sala">
             <option value="html5">HTML5</option>
             <option value="roblox">Roblox (Rojo)</option>
-            <option disabled>Unreal (em breve)</option>
+            <option value="unreal">Unreal 5.8</option>
           </select>
           <input placeholder="Nome do jogo (ex.: Capivaras TD)" value={name} onChange={(e) => setName(e.target.value)} />
           <button className="primary" disabled={busy || !name.trim()}>
