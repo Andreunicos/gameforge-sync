@@ -128,6 +128,14 @@ export const ROOM_GAME_MD_ROBLOX = `# GAME.md — visão do jogo (Roblox)
 // A pasta da sala É a raiz do projeto: o código (texto) sincroniza com merge; Content/ (binário) vem por fora
 // e é protegido por reservas (rooms/{id}/claims/assets), que o app escreve em .gfs/ASSETS.md.
 
+// Bloco do CLAUDE.md Unreal sobre o MCP do editor (o app também o acrescenta em salas Unreal que ainda não têm).
+export const UNREAL_MCP_RULE = `## Editor pelo MCP (servidor unreal-mcp)
+- O botão 🔌 Conectar Unreal do app abre o editor com o MCP oficial e escreve o .mcp.json. Ferramenta sem resposta = editor fechado: peça para abrir.
+- Comece pelas ferramentas de leitura. Uma chamada por vez (o editor executa uma de cada vez). Nada em lote nem Save All sem a pessoa pedir.
+- "Isto aqui" da sua pessoa = a seleção dela (linha VOCÊ em "Agora no editor" do .gfs/ASSETS.md).
+- O que você muda pelo MCP fica sem salvar no editor da sua pessoa até ela (ou você, se ela pedir) salvar.
+`;
+
 export const ROOM_CLAUDE_MD_UNREAL = `# Sala do GameForge Sync (Unreal Engine 5.8.1) — regras para o Claude
 
 Esta pasta é a raiz de um projeto Unreal 5.8.1 compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
@@ -139,10 +147,12 @@ ${BUGS_SECTION}
 ## Assets (.uasset/.umap): reserva OBRIGATÓRIA
 - Binário não tem merge: duas pessoas no mesmo asset = alguém perde trabalho.
 - Antes de criar, salvar, mover, renomear ou apagar QUALQUER coisa de Content/ (pelo editor, por ferramenta MCP, por script Python), leia .gfs/ASSETS.md.
-- Só mexa no que está reservado para VOCÊ. Reservado por outra pessoa: não toque, avise. Sem reserva: peça à pessoa para reservar no botão 🔒 Unreal do app.
+- Reservado por outra pessoa (ou selecionado por ela no editor, seção "Agora no editor"): não toque, avise.
+- Sem reserva: com o editor conectado (🔌) e o app aberto, o que for modificado nele é reservado sozinho por 30 min. Trabalho longo ou pasta inteira: peça à pessoa para reservar no botão 🔒 Unreal.
 - .gfs/ASSETS.md só vale com o app aberto. App fechado = não mexa em asset.
 - Nunca abra nem "conserte" .uasset/.umap como texto.
 
+${UNREAL_MCP_RULE}
 ## Como trabalhar (C++ / Python / INI)
 - Código em texto tem merge automático: não precisa reservar. Mexa só no necessário; consulte .gfs/MAPA.md (nome@linha) e leia só aquelas linhas.
 - Mudou .h (UCLASS/UPROPERTY/UFUNCTION), .Build.cs, .Target.cs ou criou arquivo C++: precisa recompilar com o editor fechado (Live Coding não pega). Avise a pessoa.
@@ -176,6 +186,7 @@ export const ROOM_GAME_MD_UNREAL = `# GAME.md — visão do jogo (Unreal Engine 
 - O que é C++ e o que é Blueprint:
 - Mapas (Content/Maps) e quem cuida de cada um:
 - Como o Content/ (binários) chega a cada pessoa: (Diversion / Perforce / Git LFS / zip)
+- Multi-User Editing: quem hospeda o servidor e por qual rede (local / VPN):
 
 ## Decisões já tomadas
 -

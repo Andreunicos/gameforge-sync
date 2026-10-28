@@ -26,7 +26,7 @@ impl RojoState {
     }
 }
 
-fn quiet(cmd: &mut Command) -> &mut Command {
+pub(crate) fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

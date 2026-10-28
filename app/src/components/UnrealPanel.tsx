@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { claimAsset, claimKey, hhmm, releaseAsset, type Claim } from "../claims";
-import type { Author } from "../types";
+import { mapName } from "../unreal";
+import type { Author, Presence } from "../types";
 import { Modal } from "./Modals";
 
 const HOURS = [1, 2, 4, 8, 12];
@@ -13,6 +14,7 @@ export function UnrealPanel({
   readOnly,
   isOwner,
   dir,
+  people,
   onClose,
 }: {
   roomId: string;
@@ -22,6 +24,7 @@ export function UnrealPanel({
   readOnly: boolean;
   isOwner: boolean;
   dir?: string;
+  people: Presence[];
   onClose: () => void;
 }) {
   const [path, setPath] = useState("");
@@ -49,9 +52,24 @@ export function UnrealPanel({
     <Modal title="🔒 Unreal: reservas de assets" onClose={onClose}>
       <p className="small muted" style={{ marginTop: 0, lineHeight: 1.55 }}>
         .uasset/.umap não têm merge: <b>reserve antes de abrir para editar</b> um mapa, Blueprint ou material, e libere ao terminar. Todos
-        veem aqui, e o Claude de cada um lê em <code>.gfs/ASSETS.md</code>. A reserva é um aviso: o Unreal não trava o arquivo.
+        veem aqui, e o Claude de cada um lê em <code>.gfs/ASSETS.md</code>. A reserva é um aviso: o Unreal não trava o arquivo. Com o editor
+        conectado (🔌), o que você modifica é reservado sozinho por 30 min (<i>auto:</i>).
       </p>
 
+      {people.some((p) => p.ue) && (
+        <>
+          <h4 style={{ margin: "0 0 6px" }}>Agora no editor</h4>
+          {people
+            .filter((p) => p.ue)
+            .map((p) => (
+              <div key={p.uid} className="small" style={{ marginBottom: 4 }}>
+                <span className="dot" style={{ background: p.color, display: "inline-block", marginRight: 6 }} />
+                <b>{p.uid === me.uid ? "você" : p.name}</b> · {mapName(p.ue!.map) || "?"}: {(p.ue!.sel ?? []).map((x) => x.l).join(", ") || "nada selecionado"}
+              </div>
+            ))}
+          <h4 style={{ marginBottom: 6 }}>Reservas</h4>
+        </>
+      )}
       {active.length === 0 && <p className="muted">Nenhum asset reservado.</p>}
       {active.map((c) => {
         const mine = c.uid === me.uid;

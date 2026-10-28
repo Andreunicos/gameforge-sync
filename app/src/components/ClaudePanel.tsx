@@ -7,7 +7,7 @@ import { Cmd, Modal } from "./Modals";
 
 const GFS_INSTALL = "npm i -g https://github.com/Andreunicos/gameforge-sync/releases/latest/download/gfs.tgz";
 
-export type OpenTool = "vscode" | "folder" | "claude";
+export type OpenTool = "vscode" | "folder" | "claude" | "diversion";
 
 /** Abre o link no navegador do sistema (no app) ou numa aba nova (no navegador). */
 const link = (url: string) => (e: MouseEvent) => {

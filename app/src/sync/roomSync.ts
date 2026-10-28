@@ -154,6 +154,11 @@ export class RoomSync {
     this.presence.setClaude(on, file);
   }
 
+  /** Sala Unreal: o que esta pessoa tem selecionado no editor / o servidor do Multi-User que ela hospeda. */
+  setUnreal(patch: Pick<Presence, "ue"> | Pick<Presence, "mue">) {
+    this.presence.setUnreal(patch);
+  }
+
   private set(patch: Partial<RoomSyncState>) {
     this.state = { ...this.state, ...patch };
     this.listeners.forEach((l) => l());

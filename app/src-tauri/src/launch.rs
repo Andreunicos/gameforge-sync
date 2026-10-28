@@ -70,6 +70,9 @@ pub(crate) fn check_room_dir(app: &tauri::AppHandle, dir: &str) -> Result<PathBu
 #[tauri::command]
 pub fn open_with(app: tauri::AppHandle, tool: String, dir: String) -> Result<(), String> {
     let target = check_room_dir(&app, &dir)?;
+    if tool == "diversion" {
+        return crate::unreal::diversion_view(&app, &target);
+    }
     spawn(&tool, &target)
 }
 

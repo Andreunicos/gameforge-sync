@@ -48,6 +48,11 @@ export class PresenceChannel {
     void update(this.myRef, { claudeOn: on, claudeFile: file });
   }
 
+  /** Sala Unreal: seleção no editor e servidor do Multi-User que esta pessoa hospeda (null apaga). */
+  setUnreal(patch: Pick<Presence, "ue"> | Pick<Presence, "mue">) {
+    void update(this.myRef, patch);
+  }
+
   leave() {
     window.clearTimeout(this.timer);
     this.unsub();

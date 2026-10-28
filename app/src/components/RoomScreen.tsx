@@ -21,8 +21,11 @@ import { BuildPanel } from "./BuildPanel";
 import { BugsPanel } from "./BugsPanel";
 import { RojoPanel } from "./RojoPanel";
 import { UnrealPanel } from "./UnrealPanel";
+import { UnrealConnectPanel } from "./UnrealConnectPanel";
 import { useRojo } from "../rojo";
 import { assetsMd, hhmm, useClaims, writeAssetsMd } from "../claims";
+import { loadSettings, selectionMd, ueStatus, useUnrealLive } from "../unreal";
+import { roomSlug } from "../sync/folderMirror";
 import { BUGS_FILE, cleanBugImgs } from "../bugimgs";
 import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
@@ -95,7 +98,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | "unreal" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | "unreal" | "ue" | null>(null);
   const build = useSyncExternalStore(onBuild, () => buildState(room.id));
   const building = build.phase === "enviando" || build.phase === "compilando" || build.phase === "baixando";
   const isRoblox = room.kind === "roblox";
@@ -221,8 +224,22 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   }, [sync]);
 
   // Sala Unreal: reservas de assets em .gfs/ASSETS.md (só reescreve quando a lista muda) e avisos para quem reservou.
-  const md = useMemo(() => (isUnreal ? assetsMd(claims.list, user.uid, claims.now) : ""), [isUnreal, claims.list, claims.now, user.uid]);
   const mirrorDir = mirror?.state === "on" ? mirror.dir : undefined;
+  // Presença do editor Unreal (seleção/modificados, de .gfs/ue-presence.json) e reserva automática do que foi modificado.
+  const ueSnap = useUnrealLive(room.id, sync, authorOf(user), isUnreal ? mirrorDir : undefined, claims.list, state.people);
+  const md = useMemo(
+    () => (isUnreal ? assetsMd(claims.list, user.uid, claims.now, selectionMd(state.people, user.uid)) : ""),
+    [isUnreal, claims.list, claims.now, user.uid, state.people],
+  );
+  // App recarregado com o servidor do Multi-User ainda ligado neste PC: volta a avisar a sala quem hospeda.
+  useEffect(() => {
+    if (!isUnreal || !mirrorDir) return;
+    const s = loadSettings(room.id, roomSlug(room.name));
+    ueStatus(mirrorDir, s.mcpPort).then(
+      (st) => st.server && sync.setUnreal({ mue: { server: s.server, session: s.session, addr: s.unicast.trim() } }),
+      () => {}, // app antigo, sem o comando
+    );
+  }, [isUnreal, mirrorDir, sync, room.id, room.name]);
   useEffect(() => {
     if (md && mirrorDir) void writeAssetsMd(mirrorDir, md).catch((e) => console.warn("ASSETS.md:", e));
   }, [md, mirrorDir]);
@@ -297,6 +314,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         {isRoblox && !readOnly && rojo.info?.version === null && (
           <button className="primary" onClick={() => setModal("rojo")} title="O Rojo não está instalado neste PC">
             ⬇️ Instalar Rojo
+          </button>
+        )}
+        {isUnreal && !readOnly && isTauri() && (
+          <button onClick={() => setModal("ue")} title="Abrir o Unreal com o MCP (e o Multi-User) e o Claude Code nesta pasta">
+            🔌 Conectar Unreal{ueSnap && <span className="dot" style={{ background: "var(--ok)", display: "inline-block", marginLeft: 6 }} />}
           </button>
         )}
         {isUnreal && (
@@ -380,6 +402,20 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           readOnly={readOnly}
           isOwner={role === "owner"}
           dir={mirrorDir}
+          people={state.people}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "ue" && (
+        <UnrealConnectPanel
+          room={room}
+          sync={sync}
+          me={authorOf(user)}
+          dir={mirrorDir}
+          people={state.people}
+          snap={ueSnap}
+          onStartMirror={startMirror}
+          onOpen={openMirror}
           onClose={() => setModal(null)}
         />
       )}

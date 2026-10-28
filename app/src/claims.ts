@@ -105,6 +105,32 @@ export async function claimAsset(roomId: string, me: Author, input: string, note
   });
 }
 
+/**
+ * Reserva automática (o editor marcou o asset como modificado; ver unreal.ts): curta, e só grava se você ainda não tem
+ * uma reserva que cubra o asset com mais de 10 min de folga (nunca encurta uma reserva manual sua).
+ * Devolve a reserva de outra pessoa que impede, se houver. Mesmas regras do Firestore da reserva manual.
+ */
+export async function autoClaim(roomId: string, me: Author, input: string, note: string, ms: number): Promise<Claim | null> {
+  const k = claimKey(input);
+  if (!k) return null;
+  let other = null as Claim | null;
+  await update(roomId, (c, now) => {
+    const all = toClaims(c);
+    other = all.find((x) => x.uid !== me.uid && x.exp > now && overlaps(x.key, k.key)) ?? null;
+    if (other || all.some((x) => x.uid === me.uid && x.exp > now + 10 * 60_000 && overlaps(x.key, k.key))) return null;
+    const old = c[k.key];
+    c[k.key] = {
+      path: k.path,
+      uid: me.uid,
+      name: me.name.slice(0, 80),
+      note: (old?.uid === me.uid && old.note ? old.note : note).slice(0, 200),
+      exp: Timestamp.fromMillis(now + Math.min(ms, MAX_HOURS * 3600_000)),
+    };
+    return k.key;
+  });
+  return other;
+}
+
 /** Libera uma reserva (a sua, uma vencida, ou qualquer uma se você é o dono da sala; as regras conferem). */
 export async function releaseAsset(roomId: string, key: string) {
   await update(roomId, (c) => {
@@ -134,8 +160,11 @@ export function useClaims(roomId: string, enabled: boolean) {
   return { list, now };
 }
 
-/** .gfs/ASSETS.md: o que o Claude lê antes de mexer em asset. Sem horário de geração: só muda quando as reservas mudam. */
-export function assetsMd(claims: Claim[], meUid: string, now: number): string {
+/**
+ * .gfs/ASSETS.md: o que o Claude lê antes de mexer em asset. Sem horário de geração: só muda quando as reservas
+ * ou a seleção no editor (`live`, de unreal.ts) mudam.
+ */
+export function assetsMd(claims: Claim[], meUid: string, now: number, live = ""): string {
   const act = claims.filter((c) => c.exp > now).sort((a, b) => a.path.localeCompare(b.path));
   const rows = act.map(
     (c) =>
@@ -144,10 +173,11 @@ export function assetsMd(claims: Claim[], meUid: string, now: number): string {
   return `# Reservas de assets (Content/)
 Gerado pelo app GameForge Sync (não edite; não sincroniza). Caminho terminado em / = pasta: vale para tudo dentro.
 Só mexa em asset reservado para VOCÊ. Sem reserva: peça à pessoa para reservar no botão 🔒 Unreal do app.
+"auto:" = o app reservou sozinho porque a pessoa modificou o asset no editor (vence em 30 min se parar de mexer).
 Se o app estiver fechado, esta lista está velha: não mexa em asset.
 
 ${rows.length ? rows.join("\n") : "Nenhuma reserva ativa."}
-`;
+${live}`;
 }
 
 export async function writeAssetsMd(dir: string, md: string) {

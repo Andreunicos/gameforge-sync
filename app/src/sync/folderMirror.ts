@@ -19,7 +19,7 @@ import type { Author, RemoteFile, Room } from "../types";
 import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
 import { hasConflictMarkers, merge3 } from "./merge";
-import { MODELOS_RULE, roomTemplates } from "./templates";
+import { MODELOS_RULE, UNREAL_MCP_RULE, roomTemplates } from "./templates";
 import { IGNORE_PATH, UNREAL_IGNORE_PATH, isCodePath } from "./fileKinds";
 
 const IGNORE = IGNORE_PATH; // inclui builds/ = saída do botão BUILD
@@ -310,6 +310,10 @@ export class FolderMirror {
       // Salas antigas: o CLAUDE.md delas ainda não manda ler o MODELOS.md.
       if (remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("MODELOS.md")) {
         await this.sync.appendToFile("CLAUDE.md", "\n" + MODELOS_RULE, "", "MODELOS.md").catch((e) => console.warn("regra MODELOS.md:", e));
+      }
+      // Salas Unreal antigas: o CLAUDE.md delas ainda não explica o MCP do editor.
+      if (this.room.kind === "unreal" && remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("unreal-mcp")) {
+        await this.sync.appendToFile("CLAUDE.md", "\n" + UNREAL_MCP_RULE, "", "unreal-mcp").catch((e) => console.warn("regra do MCP:", e));
       }
     }
   }

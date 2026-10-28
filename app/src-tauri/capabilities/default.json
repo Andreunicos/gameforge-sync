@@ -18,7 +18,12 @@
     "allow-rojo-start",
     "allow-rojo-stop",
     "allow-rojo-info",
-    "allow-rojo-install"
+    "allow-rojo-install",
+    "allow-unreal-engines",
+    "allow-unreal-open",
+    "allow-unreal-server-start",
+    "allow-unreal-server-stop",
+    "allow-unreal-status"
   ],
   "remote": {
     "urls": [

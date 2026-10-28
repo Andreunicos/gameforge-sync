@@ -61,4 +61,8 @@ export interface Presence {
   /** Pasta do Claude ligada no app desta pessoa, e o último arquivo que o Claude mexeu. */
   claudeOn?: boolean;
   claudeFile?: string | null;
+  /** Sala Unreal: mapa aberto (/Game/...) e atores selecionados no editor (rótulo + caminho único do ator). */
+  ue?: { map: string; sel?: { l: string; n: string }[] } | null;
+  /** Sala Unreal: esta pessoa hospeda o servidor do Multi-User (o que os outros põem no painel Conectar). */
+  mue?: { server: string; session: string; addr: string } | null;
 }
