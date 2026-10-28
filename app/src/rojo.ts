@@ -19,7 +19,9 @@ export interface RojoServer {
   error?: string;
 }
 
-const FIRST_PORT = 34873; // 34872 é a padrão do Rojo; os locais seguem daí para cima
+// Locais novos a partir da 35000: 34872 (padrão do Rojo) e as seguintes são as que o André usa em outros jogos.
+// Local que já tem porta em .gfs/rojo-ports.json (ex.: 34873 de versões antigas) continua com ela.
+export const FIRST_PORT = 35000;
 const PROJECT = /^([A-Za-z0-9_-]+)\/default\.project\.json$/;
 
 async function readPorts(dir: string): Promise<Record<string, number>> {
@@ -35,8 +37,8 @@ async function writePorts(dir: string, ports: Record<string, number>) {
   await writeTextFile(await join(dir, ".gfs", "rojo-ports.json"), JSON.stringify(ports, null, 2)).catch(() => {});
 }
 
-/** Porta que o local já usava; senão a menor a partir da 34873 que nenhum outro local da sala usa. */
-function wantedPort(ports: Record<string, number>, place: string): number {
+/** Porta que o local já usava; senão a menor a partir da 35000 que nenhum outro local da sala usa. */
+export function wantedPort(ports: Record<string, number>, place: string): number {
   if (ports[place]) return ports[place];
   const used = new Set(Object.values(ports));
   let p = FIRST_PORT;

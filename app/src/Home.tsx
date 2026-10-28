@@ -10,6 +10,7 @@ import { Brand } from "./components/Brand";
 import { PixelBackdrop } from "./components/PixelBackdrop";
 import { ALLOWED_EMAILS } from "./config";
 import { logout } from "./auth";
+import { useDiversionSync } from "./diversionSync";
 
 function NotAllowed({ email }: { email: string | null }) {
   return (
@@ -33,6 +34,7 @@ export function Home() {
   const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
+  useDiversionSync(user); // só faz algo no PC com o token do Diversion (o do dono das salas Unreal)
 
   // Perfil para o dono de uma sala conseguir adicionar esta pessoa sem código.
   useEffect(() => {

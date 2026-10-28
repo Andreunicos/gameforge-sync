@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { User } from "firebase/auth";
+import { join } from "@tauri-apps/api/path";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { go } from "../App";
 import { colorFor } from "../auth";
 import { APP_VERSION, DAILY_WRITE_LIMIT } from "../config";
@@ -24,11 +26,12 @@ import { UnrealPanel } from "./UnrealPanel";
 import { UnrealConnectPanel } from "./UnrealConnectPanel";
 import { useRojo } from "../rojo";
 import { assetsMd, hhmm, useClaims, writeAssetsMd } from "../claims";
-import { loadSettings, selectionMd, ueStatus, useUnrealLive } from "../unreal";
+import { loadSettings, roomProject, selectionMd, ueStatus, useUnrealLive } from "../unreal";
 import { roomSlug } from "../sync/folderMirror";
 import { BUGS_FILE, cleanBugImgs } from "../bugimgs";
 import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
+import { onAppClose } from "../closeGuard";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
   const [room, setRoom] = useState<Room | null | undefined>(undefined);
@@ -79,8 +82,10 @@ function RoomWorkspace({ user, room }: { user: User; room: Room }) {
     // Grava o que estiver pendente se a janela for fechada.
     const before = () => void s.close();
     window.addEventListener("beforeunload", before);
+    const offClose = onAppClose(() => s.flush()); // app de PC: o X espera gravar (closeGuard.ts)
     return () => {
       window.removeEventListener("beforeunload", before);
+      offClose();
       void s.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -167,10 +172,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync]);
 
-  const openMirror = async (tool: OpenTool) => {
+  // `project` (sala Unreal, "Abrir no Diversion"): pasta do projeto relativa à sala, para abrir o Content/ dele.
+  const openMirror = async (tool: OpenTool, project?: string | null) => {
     const dir = mirrorRef.current?.dir;
     if (!dir) throw new Error("Ligue a pasta do Claude primeiro.");
-    await invoke("open_with", { tool, dir });
+    await invoke("open_with", { tool, dir, project: project ?? null });
   };
 
   const stopMirror = async () => {
@@ -195,10 +201,14 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
       if (!alive) return;
       const me = authorOf(user);
       await ensureBaseline(room, sync.remoteFiles(), me).catch((e) => console.warn("backup inicial:", e));
-      unsub = watchCheckpoints(room.id, (cps) => {
-        unsub?.();
-        if (alive) void maybeAutoCheckpoint(room.id, sync.remoteFiles(), cps[0], me).catch((e) => console.warn("backup automático:", e));
-      });
+      unsub = watchCheckpoints(
+        room.id,
+        (cps) => {
+          unsub?.();
+          if (alive) void maybeAutoCheckpoint(room.id, sync.remoteFiles(), cps[0], me).catch((e) => console.warn("backup automático:", e));
+        },
+        true,
+      );
     });
     return () => {
       alive = false;
@@ -227,9 +237,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   const mirrorDir = mirror?.state === "on" ? mirror.dir : undefined;
   // Presença do editor Unreal (seleção/modificados, de .gfs/ue-presence.json) e reserva automática do que foi modificado.
   const ueSnap = useUnrealLive(room.id, sync, authorOf(user), isUnreal ? mirrorDir : undefined, claims.list, state.people);
+  // Pasta do projeto Unreal (a do .uproject: "" = raiz da sala, ou uma subpasta; null/undefined = nenhum/vários sem escolha).
+  const ueProject = useMemo(() => (isUnreal ? roomProject(room.id, state.files.map((f) => f.path)) : null), [isUnreal, room.id, state.files]);
   const md = useMemo(
-    () => (isUnreal ? assetsMd(claims.list, user.uid, claims.now, selectionMd(state.people, user.uid)) : ""),
-    [isUnreal, claims.list, claims.now, user.uid, state.people],
+    () => (isUnreal ? assetsMd(claims.list, user.uid, claims.now, selectionMd(state.people, user.uid), ueProject || "") : ""),
+    [isUnreal, claims.list, claims.now, user.uid, state.people, ueProject],
   );
   // App recarregado com o servidor do Multi-User ainda ligado neste PC: volta a avisar a sala quem hospeda.
   useEffect(() => {
@@ -243,6 +255,18 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   useEffect(() => {
     if (md && mirrorDir) void writeAssetsMd(mirrorDir, md).catch((e) => console.warn("ASSETS.md:", e));
   }, [md, mirrorDir]);
+  // Sala HTML5: erros do preview em .gfs/CONSOLE.md (o preview só manda quando o texto muda; pasta ligada depois recebe o último).
+  const consoleText = useRef<string | null>(null);
+  const writeConsole = useCallback(
+    (text: string) => {
+      consoleText.current = text;
+      if (mirrorDir) void (async () => writeTextFile(await join(mirrorDir, ".gfs", "CONSOLE.md"), text))().catch((e) => console.warn("CONSOLE.md:", e));
+    },
+    [mirrorDir],
+  );
+  useEffect(() => {
+    if (consoleText.current !== null) writeConsole(consoleText.current);
+  }, [writeConsole]);
   const warned = useRef(new Set<string>());
   const mineBefore = useRef(new Map<string, number>()); // minhas reservas na última lista: chave → vencimento
   useEffect(() => {
@@ -363,7 +387,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           <ActivityFeed roomId={room.id} />
         </aside>
         <EditorPane sync={sync} state={state} />
-        {showPreview && <PreviewPane sync={sync} room={room} />}
+        {showPreview && <PreviewPane sync={sync} room={room} onConsole={isHtml5 ? writeConsole : undefined} />}
       </div>
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}
@@ -395,6 +419,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
       )}
       {modal === "unreal" && (
         <UnrealPanel
+          room={room}
           roomId={room.id}
           me={authorOf(user)}
           claims={claims.list}
@@ -402,6 +427,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           readOnly={readOnly}
           isOwner={role === "owner"}
           dir={mirrorDir}
+          project={ueProject}
           people={state.people}
           onClose={() => setModal(null)}
         />

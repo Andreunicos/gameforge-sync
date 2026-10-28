@@ -59,7 +59,7 @@ pub async fn download_asset(app: tauri::AppHandle, url: String, token: String, d
 }
 
 /// Grava um arquivo de texto do build Web (o app gera o .html na hora).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_build_file(app: tauri::AppHandle, dir: String, name: String, content: String) -> Result<(), String> {
     let dir = check_build_dir(&app, &dir)?;
     let rel = Path::new(&name);
@@ -73,7 +73,7 @@ pub fn write_build_file(app: tauri::AppHandle, dir: String, name: String, conten
     std::fs::write(path, content).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reveal_build(app: tauri::AppHandle, dir: String) -> Result<(), String> {
     let dir = check_build_dir(&app, &dir)?;
     std::process::Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" })

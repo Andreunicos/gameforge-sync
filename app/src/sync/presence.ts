@@ -12,6 +12,14 @@ export class PresenceChannel {
   private pending: Partial<Presence> | null = null;
   private timer: number | undefined;
   private unsub: () => void;
+  private unsubConn: () => void;
+  /**
+   * Nó inteiro desta pessoa. Numa queda de rede o servidor roda o onDisconnect (apaga o nó) e os
+   * update() seguintes, sem name/color, são recusados pelo .validate: a pessoa sumiria até recarregar.
+   * Por isso, a cada reconexão, regrava tudo e arma o onDisconnect de novo.
+   */
+  private state: Omit<Presence, "at">;
+  private left = false;
 
   constructor(
     roomId: string,
@@ -20,8 +28,18 @@ export class PresenceChannel {
   ) {
     const db = rtdb();
     this.myRef = ref(db, `presence/${roomId}/${me.uid}`);
+    this.state = { ...me, file: null, line: 1, col: 0 };
     void onDisconnect(this.myRef).remove();
-    void set(this.myRef, { ...me, file: null, line: 1, col: 0, at: serverTimestamp() });
+    void set(this.myRef, { ...this.state, at: serverTimestamp() });
+    this.unsubConn = onValue(ref(db, ".info/connected"), (snap) => {
+      if (snap.val() !== true || this.left) return;
+      void onDisconnect(this.myRef)
+        .remove()
+        .then(() => {
+          if (!this.left) return set(this.myRef, { ...this.state, at: serverTimestamp() });
+        })
+        .catch(() => {});
+    });
     this.unsub = onValue(ref(db, `presence/${roomId}`), (snap) => {
       const val = (snap.val() ?? {}) as Record<string, Presence>;
       onPeople(Object.entries(val).map(([uid, p]) => ({ ...p, uid })));
@@ -39,23 +57,31 @@ export class PresenceChannel {
   private send() {
     if (!this.pending) return;
     this.lastSent = Date.now();
-    void update(this.myRef, { ...this.pending, at: serverTimestamp() });
+    this.patch(this.pending, true);
     this.pending = null;
+  }
+
+  private patch(p: Partial<Presence>, stamp = false) {
+    if (this.left) return;
+    this.state = { ...this.state, ...p };
+    void update(this.myRef, stamp ? { ...p, at: serverTimestamp() } : p).catch(() => {});
   }
 
   /** Liga/desliga o selo do Claude (pasta ligada) e o arquivo em que ele está mexendo. */
   setClaude(on: boolean, file: string | null = null) {
-    void update(this.myRef, { claudeOn: on, claudeFile: file });
+    this.patch({ claudeOn: on, claudeFile: file });
   }
 
   /** Sala Unreal: seleção no editor e servidor do Multi-User que esta pessoa hospeda (null apaga). */
   setUnreal(patch: Pick<Presence, "ue"> | Pick<Presence, "mue">) {
-    void update(this.myRef, patch);
+    this.patch(patch);
   }
 
   leave() {
+    this.left = true;
     window.clearTimeout(this.timer);
     this.unsub();
+    this.unsubConn();
     void remove(this.myRef);
   }
 }

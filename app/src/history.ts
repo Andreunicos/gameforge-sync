@@ -9,6 +9,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -101,9 +102,15 @@ export function watchHistory(roomId: string, max: number, cb: (h: HistoryEntry[]
   );
 }
 
-export function watchCheckpoints(roomId: string, cb: (c: Checkpoint[]) => void) {
-  return onSnapshot(query(collection(db, "rooms", roomId, "checkpoints"), orderBy("ts", "desc"), limit(50)), (snap) =>
-    cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Checkpoint)),
+/** `serverOnly`: ignora o retrato do cache em disco (o backup automático decide pelo último backup de verdade). */
+export function watchCheckpoints(roomId: string, cb: (c: Checkpoint[]) => void, serverOnly = false) {
+  return onSnapshot(
+    query(collection(db, "rooms", roomId, "checkpoints"), orderBy("ts", "desc"), limit(50)),
+    { includeMetadataChanges: serverOnly },
+    (snap) => {
+      if (serverOnly && snap.metadata.fromCache) return;
+      cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Checkpoint));
+    },
   );
 }
 
@@ -161,6 +168,68 @@ export async function restoreCheckpoint(roomId: string, cp: Checkpoint, current:
   }
   const extra = current.filter((f) => !(f.path in cp.files)).map((f) => f.path);
   return { restored, missing, extra };
+}
+
+// ── compactar (dono) ──────────────────────────────────────────────────────
+// Cada gravação guarda o arquivo inteiro no histórico: numa sala ativa isso cresce rumo ao 1 GiB do plano grátis.
+// O dono apaga as versões antigas, guardando as últimas KEEP de cada arquivo e TODAS as que algum backup (💾/📌) usa
+// (voltar o jogo para um backup continua funcionando). O histórico de arquivos apagados (@del-) fica.
+// Não lê o histórico (seria baixar o conteúdo de tudo): os ids são arquivo@versão, então apaga pelo id.
+
+export const COMPACT_KEEP = 30;
+export const COMPACT_MAX = 4000; // por vez (o plano grátis aceita 20 mil exclusões por dia no projeto todo)
+
+/** Ids a apagar, dos mais antigos para os mais novos. `done`: até que versão cada arquivo já foi compactado antes. */
+export function compactPlan(
+  files: { path: string; version: number }[],
+  cps: { files: Record<string, number> }[],
+  done: Record<string, number>,
+  keep = COMPACT_KEEP,
+  max = COMPACT_MAX,
+): { ids: string[]; upTo: Record<string, number> } {
+  const kept = new Set(cps.flatMap((cp) => Object.entries(cp.files).map(([p, v]) => historyId(p, v))));
+  const ids: string[] = [];
+  const upTo: Record<string, number> = {};
+  for (const f of files) {
+    const last = f.version - keep; // apaga 1..last
+    let v = Math.max(done[f.path] ?? 0, 0) + 1;
+    for (; v <= last && ids.length < max; v++) {
+      const id = historyId(f.path, v);
+      if (!kept.has(id)) ids.push(id);
+    }
+    if (v - 1 > (done[f.path] ?? 0)) upTo[f.path] = v - 1;
+    if (ids.length >= max) break;
+  }
+  return { ids, upTo };
+}
+
+const compactKey = (roomId: string) => `gfs-hist-compact-${roomId}`;
+
+/** Planeja com a lista atual de arquivos e TODOS os backups (não só os 50 da tela). */
+export async function planCompaction(roomId: string, files: RemoteFile[]) {
+  const snap = await getDocs(collection(db, "rooms", roomId, "checkpoints"));
+  let done: Record<string, number> = {};
+  try {
+    done = JSON.parse(localStorage.getItem(compactKey(roomId)) ?? "{}");
+  } catch {
+    /* sem storage: só confere de novo o que já foi apagado */
+  }
+  return compactPlan(files, snap.docs.map((d) => d.data() as Checkpoint), done);
+}
+
+export async function runCompaction(roomId: string, plan: { ids: string[]; upTo: Record<string, number> }, onProgress: (n: number) => void) {
+  for (let i = 0; i < plan.ids.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const id of plan.ids.slice(i, i + 400)) batch.delete(doc(db, "rooms", roomId, "history", id));
+    await batch.commit();
+    onProgress(Math.min(i + 400, plan.ids.length));
+  }
+  try {
+    const done = JSON.parse(localStorage.getItem(compactKey(roomId)) ?? "{}");
+    localStorage.setItem(compactKey(roomId), JSON.stringify({ ...done, ...plan.upTo }));
+  } catch {
+    /* sem storage */
+  }
 }
 
 // ── backup inicial e automático ───────────────────────────────────────────

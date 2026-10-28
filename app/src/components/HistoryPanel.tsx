@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { colorFor } from "../auth";
 import {
+  COMPACT_KEEP,
+  COMPACT_MAX,
   createCheckpoint,
   diffLines,
   getVersion,
+  planCompaction,
   restoreCheckpoint,
   restoreFile,
+  runCompaction,
   watchCheckpoints,
   watchHistory,
   type Checkpoint,
@@ -114,6 +118,33 @@ export function HistoryPanel({
     }
   };
 
+  const compact = async () => {
+    setBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const plan = await planCompaction(room.id, sync.remoteFiles());
+      if (!plan.ids.length) {
+        setMsg(`Nada para compactar: cada arquivo tem até ${COMPACT_KEEP} versões além das usadas nos backups.`);
+        return;
+      }
+      if (
+        !confirm(
+          `Compactar o histórico? Apaga até ${plan.ids.length} versões antigas (para sempre).
+
+Ficam: as últimas ${COMPACT_KEEP} versões de cada arquivo, todas as versões usadas pelos backups 💾/📌 (voltar o jogo para eles continua funcionando) e os arquivos apagados.`,
+        )
+      )
+        return;
+      await runCompaction(room.id, plan, (n) => setMsg(`🧹 Apagando versões antigas… ${n}/${plan.ids.length}`));
+      setMsg(`🧹 Histórico compactado: ${plan.ids.length} versões antigas apagadas.${plan.ids.length >= COMPACT_MAX ? " Ainda há mais: clique de novo para continuar." : ""}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   let lastDay = "";
 
   return (
@@ -136,6 +167,11 @@ export function HistoryPanel({
           {!readOnly && (
             <button className="primary" disabled={busy} onClick={() => void mark()} title="Tira uma foto do jogo inteiro agora">
               📌 Marcar versão
+            </button>
+          )}
+          {room.ownerId === me.uid && (
+            <button disabled={busy} onClick={() => void compact()} title={`Apaga versões antigas (fica com as últimas ${COMPACT_KEEP} de cada arquivo e as dos backups) para a sala não encher o banco grátis`}>
+              🧹 Compactar
             </button>
           )}
           <button className="ghost" onClick={onClose}>

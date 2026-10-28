@@ -1,6 +1,6 @@
 // Quais arquivos entram numa sala (importar pasta e pasta do Claude): qualquer texto de código/script,
 // em qualquer linguagem. Fica de fora o que é binário, gerado ou segredo.
-// Mantenha igual a gfs/src/fileKinds.ts se o gfs passar a usar.
+// app/src/sync/fileKinds.ts e gfs/src/fileKinds.ts são o MESMO arquivo (o teste do app compara): mude os dois.
 
 const EXT = new Set(
   (
@@ -35,6 +35,10 @@ export const IGNORE_PATH =
 /** Só em sala Unreal (outros tipos podem ter Build/ ou Content/ de verdade, ex.: Unity WebGL): pastas geradas ou binárias
  * em qualquer nível (Plugins/X/Binaries também). Content/ é .uasset/.umap, menos Content/Python (scripts do editor). */
 export const UNREAL_IGNORE_PATH = /(^|\/)(Binaries|Intermediate|Saved|DerivedDataCache|\.vs|Build)(\/|$)|(^|\/)Content\/(?!Python(\/|$))/i;
+
+/** Pastas onde o projeto Unreal (.uproject) nunca está: a busca (raiz e subpastas até 2 níveis) não entra nelas nem nas que
+ * começam com ponto. Igual ao SKIP de app/src-tauri/src/unreal.rs. */
+export const UE_PROJECT_SKIP = /^(node_modules|intermediate|saved|deriveddatacache|binaries|builds|content|build)$/i;
 
 /** O arquivo é texto de código/script que a sala aceita? (`rel` = caminho relativo à pasta do projeto) */
 export function isCodePath(rel: string): boolean {

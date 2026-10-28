@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { doc, runTransaction } from "firebase/firestore";
 import { db } from "../firebase";
 import { watchBugImgs } from "../bugimgs";
+import { onAppClose } from "../closeGuard";
 import { logActivity } from "../rooms";
 import { countWrite } from "../usage";
 import { MAX_BIG_BYTES, kb, utf8Bytes } from "../bigfile";
@@ -19,7 +20,8 @@ import type { Author, RemoteFile, Room } from "../types";
 import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
 import { hasConflictMarkers, merge3 } from "./merge";
-import { MODELOS_RULE, UNREAL_MCP_RULE, roomTemplates } from "./templates";
+import { CONSOLE_RULE, MODELOS_RULE, OLD_UE_PRESENCE, UNREAL_MCP_RULE, mergeClaudeSettings, roomTemplates, textHash, ueProjectRule, ueScripts } from "./templates";
+import { roomProject } from "../unreal";
 import { IGNORE_PATH, UNREAL_IGNORE_PATH, isCodePath } from "./fileKinds";
 
 const IGNORE = IGNORE_PATH; // inclui builds/ = saída do botão BUILD
@@ -59,13 +61,17 @@ export class FolderMirror {
   dir = "";
   private base = new Map<string, Base>();
   private inflight = new Map<string, Base>();
+  /** Arquivos em que a sala voltou para uma versão MENOR que a base (apagado e criado de novo): aceita a partir desta. */
+  private lower = new Map<string, number>();
   private timers = new Map<string, number>();
   private queue = new Map<string, Promise<void>>();
   private lastActivity = new Map<string, number>();
   private unwatch?: UnwatchFn;
   private offRemote?: () => void;
   private offImgs?: () => void;
+  private offClose?: () => void;
   private imgsBusy: Promise<void> = Promise.resolve();
+  private ueBusy: Promise<void> = Promise.resolve();
   private saveTimer: number | undefined;
   private stopped = false;
   private backups = 0;
@@ -93,6 +99,7 @@ export class FolderMirror {
     try {
       this.dir = await this.pickDir();
       await mkdir(await join(this.dir, ".gfs", "base"), { recursive: true });
+      await this.writeClaudeSettings().catch((e) => console.warn(".claude/settings.json:", e));
       await this.loadState();
       await this.sync.whenLoaded();
       if (this.stopped) return this.dir;
@@ -100,6 +107,8 @@ export class FolderMirror {
       this.writeMap();
       this.offRemote = this.sync.onRemoteFile((path, f) => {
         this.scheduleMap();
+        // Projeto Unreal criado (ou movido) com a pasta ligada: os scripts de presença vão para dentro dele.
+        if (f && /\.uproject$/i.test(path)) this.ueBusy = this.ueBusy.then(() => this.ensureUeScripts()).catch((e) => console.warn("scripts do Unreal:", e));
         return this.enqueue(path, () => this.onRemote(path, f));
       });
       this.offImgs = watchBugImgs(this.room.id, (imgs) => {
@@ -113,6 +122,7 @@ export class FolderMirror {
         return this.dir;
       }
       this.unwatch = unwatch;
+      this.offClose = onAppClose(() => this.flush());
       this.sync.setClaude(true);
       this.status("pasta pronta");
       return this.dir;
@@ -127,11 +137,33 @@ export class FolderMirror {
     if (this.unwatch) this.sync.setClaude(false);
     this.offRemote?.();
     this.offImgs?.();
+    this.offClose?.();
     this.unwatch?.();
     this.timers.forEach((t) => window.clearTimeout(t));
     window.clearTimeout(this.mapTimer);
     await Promise.all(this.queue.values()).catch(() => {});
     await this.saveState();
+  }
+
+  /** Janela fechando: termina o que está na fila e grava o .gfs/state.json agora (ele espera 1 s para juntar gravações). */
+  async flush() {
+    await Promise.all(this.queue.values()).catch(() => {});
+    window.clearTimeout(this.saveTimer);
+    await this.saveState();
+  }
+
+  /**
+   * .claude/settings.json da pasta (só neste PC: começa com ponto, não sincroniza): o Claude não lê nem edita a base
+   * do merge, os backups e os builds, e numa sala Unreal o servidor unreal-mcp do .mcp.json já vem aprovado.
+   * Mescla com o que já existe (nunca apaga chave de ninguém); JSON estragado = não mexe.
+   */
+  private async writeClaudeSettings() {
+    const f = await join(this.dir, ".claude", "settings.json");
+    const cur = (await exists(f)) ? await readTextFile(f) : null;
+    const next = mergeClaudeSettings(cur, this.room.kind);
+    if (next === null) return;
+    await mkdir(await join(this.dir, ".claude"), { recursive: true });
+    await writeTextFile(f, next);
   }
 
   /**
@@ -284,6 +316,14 @@ export class FolderMirror {
           }
         } else if (f.version > b.version) {
           await this.onRemote(f.path, f);
+        } else if (f.version < b.version) {
+          // A sala tem versão MENOR que a base: o arquivo foi apagado e criado de novo com o app fechado.
+          if (disk === null) {
+            await this.setBase(f.path, { content: f.content, version: f.version });
+            await this.writeDisk(f.path, f.content);
+          } else {
+            await this.push(f.path, true); // confere no servidor e, se for isso mesmo, faz backup + merge
+          }
         } else if (disk === null) {
           await this.writeDisk(f.path, b.content); // o Claude não apaga arquivo da sala: restaura
         } else if (disk !== b.content) {
@@ -315,6 +355,42 @@ export class FolderMirror {
       if (this.room.kind === "unreal" && remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("unreal-mcp")) {
         await this.sync.appendToFile("CLAUDE.md", "\n" + UNREAL_MCP_RULE, "", "unreal-mcp").catch((e) => console.warn("regra do MCP:", e));
       }
+      // Salas HTML5 antigas: o CLAUDE.md delas ainda não manda ler os erros do preview.
+      if ((this.room.kind ?? "html5") === "html5" && remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("CONSOLE.md")) {
+        await this.sync.appendToFile("CLAUDE.md", "\n## Erros do jogo\n" + CONSOLE_RULE, "", "CONSOLE.md").catch((e) => console.warn("regra do CONSOLE.md:", e));
+      }
+    }
+    await this.ensureUeScripts();
+  }
+
+  /**
+   * Sala Unreal: os scripts de presença do editor vão para o Content/Python do PROJETO (pasta do .uproject: raiz da sala
+   * ou subpasta), que é de onde o editor os roda. Cria só o que falta (nunca escreve por cima de arquivo de ninguém) e
+   * troca o gameforge_presence.py antigo intacto pelo novo. Roda ao ligar e quando chega um .uproject (projeto criado
+   * depois). Sem projeto, ou com vários sem escolha neste PC, não faz nada (o 🔌 Conectar Unreal pede qual e cria).
+   */
+  private async ensureUeScripts() {
+    if (this.room.kind !== "unreal" || !this.canEdit || this.stopped) return;
+    const remote = new Map(this.sync.remoteFiles().map((f) => [f.path, f]));
+    const project = roomProject(this.room.id, [...remote.keys()]);
+    if (typeof project !== "string") return;
+    const scripts = ueScripts(project);
+    for (const [p, text] of scripts) {
+      if (remote.has(p) || (await this.readDisk(p)) !== null) continue;
+      await this.writeDisk(p, text);
+      await this.enqueue(p, () => this.push(p));
+    }
+    // Script de presença de versão antiga, intacto: vira o novo (que informa a sessão do Multi-User e acha a sala acima do projeto).
+    const [pyPath, newPy] = scripts[1];
+    const py = remote.get(pyPath);
+    if (py && !py.parts && OLD_UE_PRESENCE.includes(textHash(norm(py.content)))) {
+      await this.writeDisk(pyPath, newPy);
+      await this.enqueue(pyPath, () => this.push(pyPath));
+    }
+    // Projeto numa subpasta: o CLAUDE.md da sala diz onde ele está (uma vez).
+    const md = remote.get("CLAUDE.md");
+    if (project && md && !md.content.includes("## Pasta do projeto")) {
+      await this.sync.appendToFile("CLAUDE.md", "\n" + ueProjectRule(project), "", "## Pasta do projeto").catch((e) => console.warn("regra da pasta do projeto:", e));
     }
   }
 
@@ -334,6 +410,7 @@ export class FolderMirror {
   private async onRemote(path: string, f: RemoteFile | null) {
     const b = this.base.get(path);
     if (!f) {
+      this.lower.delete(path);
       if (!b) return;
       const disk = await this.readDisk(path);
       this.base.delete(path);
@@ -341,7 +418,10 @@ export class FolderMirror {
       if (disk === null || disk === b.content) await remove(await this.abs(path)).catch(() => {});
       return;
     }
-    if (b && f.version <= b.version) return;
+    const low = this.lower.get(path);
+    const recreated = !!b && low !== undefined && f.version >= low && f.version <= b.version;
+    if (b && f.version <= b.version && !recreated) return;
+    this.lower.delete(path);
     const inf = this.inflight.get(path);
     if (inf && inf.version === f.version && inf.content === f.content) return; // eco do meu push
 
@@ -352,6 +432,10 @@ export class FolderMirror {
       if (disk !== f.content) await this.writeDisk(path, f.content);
       this.status(`↓ ${path} (${who(f.author)})`);
       return;
+    }
+    if (recreated) {
+      await this.writeBackup(path, disk);
+      this.sync.onToast({ kind: "info", text: `${path} foi apagado e criado de novo na sala: a pasta do Claude juntou com a versão nova (a cópia antiga está em .gfs/backup).` });
     }
     const m = merge3(b?.content ?? "", disk, f.content, who(f.author));
     await this.setBase(path, next);
@@ -366,8 +450,11 @@ export class FolderMirror {
     }
   }
 
-  /** O arquivo mudou na pasta: grava na sala se partiu da versão atual (senão o listener faz o merge). */
-  private async push(path: string) {
+  /**
+   * O arquivo mudou na pasta: grava na sala se partiu da versão atual (senão o listener faz o merge).
+   * `verify`: confere a versão no servidor mesmo sem mudança local (versão da sala menor que a base).
+   */
+  private async push(path: string, verify = false) {
     if (!this.canEdit || this.stopped) return;
     const disk = await this.readDisk(path);
     const b = this.base.get(path);
@@ -379,7 +466,7 @@ export class FolderMirror {
       }
       return;
     }
-    if (b && disk === b.content) return;
+    if (b && disk === b.content && !verify) return;
     if (hasConflictMarkers(disk)) return;
     if (utf8Bytes(disk) > MAX_BIG_BYTES) {
       this.sync.onToast({
@@ -393,14 +480,24 @@ export class FolderMirror {
     const version = baseVersion + 1;
     const ref = doc(db, "rooms", this.room.id, "files", fileDocId(path));
     this.inflight.set(path, { content: disk, version });
+    let low: number | undefined;
     try {
       let writes = 0;
       await runTransaction(db, async (tx) => {
+        low = undefined;
+        writes = 0;
         const snap = await tx.get(ref);
         const current = snap.exists() ? (snap.data().version as number) : 0;
-        if (current !== baseVersion) throw new Stale();
+        if (current !== baseVersion) {
+          // Versão da sala MENOR que a base: o arquivo foi apagado e criado de novo (a versão recomeçou do 1).
+          // Sem isto a pasta tentaria gravar para sempre em cima de uma versão que não existe mais, em silêncio.
+          if (snap.exists() && current < baseVersion) low = current;
+          throw new Stale();
+        }
+        if (disk === b?.content) return; // só conferindo (verify): nada mudou aqui
         writes = putFile(tx, this.room.id, path, disk, version, this.author, snap);
       });
+      if (!writes) return;
       countWrite(writes);
       await this.setBase(path, { content: disk, version });
       this.status(`↑ ${path} v${version}`);
@@ -411,6 +508,11 @@ export class FolderMirror {
       // Alguém gravou antes: o listener traz a versão nova e o onRemote faz o merge.
     } finally {
       this.inflight.delete(path);
+    }
+    if (low !== undefined) {
+      this.lower.set(path, low);
+      const r = this.sync.remoteFiles().find((x) => x.path === path);
+      if (r && r.version >= low) await this.onRemote(path, r); // senão o listener ainda vai trazer (e o onRemote aceita)
     }
   }
 

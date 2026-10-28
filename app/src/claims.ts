@@ -37,7 +37,8 @@ const ref = (roomId: string) => doc(db, "rooms", roomId, "claims", "assets");
 /**
  * Chave única de um asset ou pasta, igual para todas as formas de escrever o mesmo asset:
  * Content/Maps/Arena.umap, /Game/Maps/Arena, /Game/Maps/Arena.Arena e a referência copiada no editor
- * (World'/Game/Maps/Arena.Arena'). Pasta termina com / (ou /*). Minúsculas: no Windows é o mesmo arquivo.
+ * (World'/Game/Maps/Arena.Arena') e, com o projeto numa subpasta, TesteUnreal/Content/Maps/Arena.umap.
+ * Pasta termina com / (ou /*). Minúsculas: no Windows é o mesmo arquivo.
  */
 export function claimKey(input: string): { key: string; path: string } | null {
   let p = input.trim().replace(/\\/g, "/");
@@ -45,15 +46,33 @@ export function claimKey(input: string): { key: string; path: string } | null {
   const folder = /\/\*?$/.test(p);
   p = p.replace(/\/\*?$/, "");
   if (/^\/Game(\/|$)/i.test(p)) p = "Content" + p.slice(5).replace(/\.[^/]*$/, ""); // tira o .NomeDoObjeto
-  const parts = p.split("/").filter((s) => s && s !== ".");
+  let parts = p.split("/").filter((s) => s && s !== ".");
   if (!parts.length || parts.includes("..")) return null;
+  // Projeto numa subpasta da sala (TesteUnreal/Content/X.umap): a chave é a mesma de Content/X.umap e /Game/X.
+  // Até 2 pastas antes, como a busca do projeto; Plugins/P/Content é de plugin (/P/, não /Game): fica como está.
+  const c = parts.findIndex((s) => s.toLowerCase() === "content");
+  if ((c === 1 || c === 2) && parts[0].toLowerCase() !== "plugins") parts = parts.slice(c);
   const path = parts.join("/") + (folder ? "/" : "");
   const key = (folder ? path : path.replace(/\.(uasset|umap)$/i, "")).toLowerCase();
   return key.length <= 300 ? { key, path } : null;
 }
 
-/** Uma reserva cobre a outra? (mesma chave, ou uma é pasta e a outra está dentro dela) */
-export const overlaps = (a: string, b: string) => a === b || (a.endsWith("/") && b.startsWith(a)) || (b.endsWith("/") && a.startsWith(b));
+const covers = (a: string, b: string) => a === b || (a.endsWith("/") && b.startsWith(a)) || (b.endsWith("/") && a.startsWith(b));
+
+// Com One File Per Actor os atores do mapa /Game/X ficam em /Game/__ExternalActors__/X/ e os objetos em __ExternalObjects__/X/
+// (ExternalPackageHelper.cpp da 5.8): reservar o mapa, ou a pasta dele, cobre esses arquivos também.
+// Só contra chaves de verdade: a pasta externa de Maps/Arena não pode bater com a de Maps/Arena/Texturas/T_x (pasta comum ao lado do mapa).
+const EXTERNAL = ["__externalactors__/", "__externalobjects__/"];
+function externals(k: string): string[] {
+  const rest = k.startsWith("content/") ? k.slice(8) : "";
+  if (!rest || EXTERNAL.some((e) => rest.startsWith(e))) return [];
+  const dir = rest.endsWith("/") ? rest : rest + "/";
+  return EXTERNAL.map((e) => `content/${e}${dir}`);
+}
+
+/** Uma reserva cobre a outra? (mesma chave, uma é pasta e a outra está dentro dela, ou é ator/objeto externo de um mapa reservado) */
+export const overlaps = (a: string, b: string) =>
+  covers(a, b) || externals(a).some((x) => covers(x, b)) || externals(b).some((y) => covers(a, y));
 
 const toClaims = (c: Record<string, Entry>): Claim[] =>
   Object.entries(c).map(([key, e]) => ({ key, path: e.path, uid: e.uid, name: e.name, note: e.note, exp: e.exp.toMillis() }));
@@ -164,7 +183,7 @@ export function useClaims(roomId: string, enabled: boolean) {
  * .gfs/ASSETS.md: o que o Claude lê antes de mexer em asset. Sem horário de geração: só muda quando as reservas
  * ou a seleção no editor (`live`, de unreal.ts) mudam.
  */
-export function assetsMd(claims: Claim[], meUid: string, now: number, live = ""): string {
+export function assetsMd(claims: Claim[], meUid: string, now: number, live = "", project = ""): string {
   const act = claims.filter((c) => c.exp > now).sort((a, b) => a.path.localeCompare(b.path));
   const rows = act.map(
     (c) =>
@@ -175,7 +194,7 @@ Gerado pelo app GameForge Sync (não edite; não sincroniza). Caminho terminado 
 Só mexa em asset reservado para VOCÊ. Sem reserva: peça à pessoa para reservar no botão 🔒 Unreal do app.
 "auto:" = o app reservou sozinho porque a pessoa modificou o asset no editor (vence em 30 min se parar de mexer).
 Se o app estiver fechado, esta lista está velha: não mexa em asset.
-
+${project ? `O projeto está em ${project}/: Content/... abaixo = ${project}/Content/... nesta pasta.\n` : ""}
 ${rows.length ? rows.join("\n") : "Nenhuma reserva ativa."}
 ${live}`;
 }

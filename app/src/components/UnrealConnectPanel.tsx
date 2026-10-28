@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_MCP_PORT,
+  editorAlive,
   enablePlugins,
   findEngines,
   isOldApp,
@@ -8,6 +9,8 @@ import {
   mapName,
   openEditor,
   pickEngine,
+  pickProject,
+  projectDirs,
   readUproject,
   saveSettings,
   startServer,
@@ -21,7 +24,10 @@ import {
   type UeStatus,
   type Uproject,
 } from "../unreal";
+import { exists, mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { join } from "@tauri-apps/api/path";
 import { roomSlug } from "../sync/folderMirror";
+import { ueScripts } from "../sync/templates";
 import type { RoomSync } from "../sync/roomSync";
 import type { Author, Presence, Room } from "../types";
 import type { OpenTool } from "./ClaudePanel";
@@ -48,12 +54,13 @@ export function UnrealConnectPanel({
   people: Presence[];
   snap: UeSnap | null;
   onStartMirror: () => Promise<void>;
-  onOpen: (tool: OpenTool) => Promise<void>;
+  onOpen: (tool: OpenTool, project?: string | null) => Promise<void>;
   onClose: () => void;
 }) {
   const [s, setS] = useState<UeSettings>(() => loadSettings(room.id, roomSlug(room.name)));
   const [engines, setEngines] = useState<Engine[] | null>(null);
   const [other, setOther] = useState("");
+  const [dirs, setDirs] = useState<string[] | null>(null); // pastas da sala com .uproject ("" = raiz)
   const [up, setUp] = useState<Uproject | null | undefined>(undefined);
   const [st, setSt] = useState<UeStatus | null>(null);
   const [oldApp, setOldApp] = useState(false);
@@ -69,8 +76,12 @@ export function UnrealConnectPanel({
       return next;
     });
 
+  // Projeto: "" = raiz da sala, "TesteUnreal" = subpasta; null = nenhum; undefined = vários (a pessoa escolhe) ou procurando.
+  const proj = dirs && pickProject(dirs, s.project);
+
   const fail = (e: unknown) => {
-    if (isOldApp(e)) setOldApp(true);
+    // App de antes da busca em subpastas: o Rust só olha a raiz e responde SEM_UPROJECT.
+    if (isOldApp(e) || (proj && String(e).includes("SEM_UPROJECT"))) setOldApp(true);
     else setError(e instanceof Error ? e.message : String(e));
   };
 
@@ -93,13 +104,26 @@ export function UnrealConnectPanel({
       return list;
     }, fail);
 
-  const loadUproject = () => (dir ? readUproject(dir).then(setUp, fail) : Promise.resolve());
+  /** Acha o projeto pelos arquivos da sala (raiz ou subpasta até 2 níveis) e lê o .uproject dele no disco. */
+  const findProject = async () => {
+    const list = projectDirs(sync.remoteFiles().map((f) => f.path));
+    setDirs(list);
+    const p = pickProject(list, s.project);
+    const u = dir && typeof p === "string" ? await readUproject(dir, p) : null;
+    setUp(u);
+    return { p, u };
+  };
+  const loadUproject = () => findProject().catch(fail);
 
   useEffect(() => {
     void loadEngines(s.root);
-    void loadUproject();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dir]);
+
+  useEffect(() => {
+    if (dir) void loadUproject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dir, s.project]);
 
   // Engine escolhida: a salva, a da versão do .uproject ou a mais nova.
   useEffect(() => {
@@ -120,7 +144,7 @@ export function UnrealConnectPanel({
         setSt(x);
         if (waitUntil.current && x.mcp) {
           waitUntil.current = 0;
-          setMsg("O Unreal abriu com o MCP ligado. Abrindo o Claude Code na pasta do projeto…");
+          setMsg("O Unreal abriu com o MCP ligado. Abrindo o Claude Code na pasta da sala…");
           await onOpen("vscode").catch(fail);
         } else if (waitUntil.current && Date.now() > waitUntil.current) {
           waitUntil.current = 0;
@@ -144,20 +168,50 @@ export function UnrealConnectPanel({
 
   const engine = engines?.find((e) => e.root === s.root);
   const hosts = people.filter((p) => p.mue && p.uid !== me.uid);
-  const initPy = sync.remoteFiles().find((f) => f.path.toLowerCase() === "content/python/init_unreal.py");
+  const pre = proj ? `${proj}/` : "";
+  const initPy = sync.remoteFiles().find((f) => f.path.toLowerCase() === `${pre}content/python/init_unreal.py`.toLowerCase());
   const presenceOff = initPy && !initPy.content.includes("gameforge_presence");
+  // A pasta da sala cria os scripts sozinha quando há um projeto só; com vários, cria no que a pessoa escolher aqui.
+  const presenceMissing = !!up && !initPy;
+
+  const createScripts = () =>
+    run(async () => {
+      if (!dir || typeof proj !== "string") return;
+      for (const [p, text] of ueScripts(proj)) {
+        const parts = p.split("/");
+        const f = await join(dir, ...parts);
+        if (await exists(f)) continue; // nunca por cima do que já existe
+        await mkdir(await join(dir, ...parts.slice(0, -1)), { recursive: true });
+        await writeTextFile(f, text);
+      }
+      setMsg(`Scripts criados em ${pre}Content/Python. A pasta da sala manda para todos em segundos. Reabra o Unreal para ele carregar.`);
+    });
 
   const connect = () =>
     run(async () => {
       if (!dir) throw new Error("Ligue a pasta da sala primeiro (botão acima).");
-      const u = await readUproject(dir);
-      setUp(u);
-      if (!u) throw new Error("A pasta da sala ainda não tem o projeto: feche o Unreal e copie o .uproject, Source/, Config/ e Content/ para dentro dela.");
+      const { p, u } = await findProject();
+      if (p === undefined) throw new Error("Há mais de um projeto (.uproject) na pasta da sala: escolha qual na lista acima.");
+      if (typeof p !== "string" || !u)
+        throw new Error(
+          "Não achei o projeto: o .uproject tem que estar na pasta da sala ou numa subpasta dela (até 2 níveis), como a pasta que o Unreal cria com o nome do projeto. Não precisa mover nada; se acabou de criar, espere uns segundos a pasta da sala enviar e tente de novo.",
+        );
       if (u.missing.length) throw new Error(`Faltam plugins no ${u.file}: ${u.missing.join(", ")}. Clique em "Ligar plugins" abaixo.`);
       if (!engine) throw new Error("Unreal não encontrado neste PC. Indique a pasta da engine (ex.: C:\\Program Files\\Epic Games\\UE_5.8).");
       if (s.multi && (!s.server || !s.session)) throw new Error("Preencha o servidor e a sessão do Multi-User (ou desmarque a opção).");
       await writeMcpJson(dir, s.mcpPort);
       const now = await ueStatus(dir, s.mcpPort);
+      // O script de presença deu sinal há menos de 30 s: o editor deste projeto já está aberto, não abre outro.
+      if (await editorAlive(dir)) {
+        if (!now.mcp) {
+          throw new Error(
+            `O Unreal deste projeto já está aberto, mas o MCP não responde na porta ${s.mcpPort}. Feche o Unreal e clique em Conectar de novo (ele abre já nessa porta), ou confira Edit > Plugins (Unreal MCP e All Toolsets).`,
+          );
+        }
+        await onOpen("vscode");
+        setMsg(`O Unreal deste projeto já estava aberto (MCP na porta ${s.mcpPort}): abri só o Claude Code.`);
+        return;
+      }
       if (
         now.mcp &&
         !confirm(`Algo já responde na porta ${s.mcpPort}: o Unreal deste projeto já está aberto? OK = abrir outro editor mesmo assim. Cancelar = só abrir o Claude.`)
@@ -166,7 +220,7 @@ export function UnrealConnectPanel({
         setMsg(".mcp.json pronto e Claude Code aberto. Se a porta é de outro programa, mude a porta do MCP aqui e no Unreal.");
         return;
       }
-      await openEditor(dir, s, me.name);
+      await openEditor(dir, s, me.name, p);
       waitUntil.current = Date.now() + MCP_WAIT_MS;
       setMsg(`Abrindo o Unreal ${engine.version}${s.multi ? ` e entrando na sessão ${s.session}` : ""}… O Claude Code abre sozinho quando o MCP responder.`);
     });
@@ -174,7 +228,9 @@ export function UnrealConnectPanel({
   const host = () =>
     run(async () => {
       if (!dir || !engine) throw new Error("Ligue a pasta da sala e escolha o Unreal primeiro.");
-      await startServer(dir, s);
+      const { p, u } = await findProject();
+      if (typeof p !== "string" || !u) throw new Error("O servidor usa o nome do .uproject: ache o projeto primeiro (veja a linha Projeto acima).");
+      await startServer(dir, s, p);
       sync.setUnreal({ mue: { server: s.server, session: s.session, addr: s.unicast.trim() } });
       setSt(await ueStatus(dir, s.mcpPort));
       setMsg("Servidor do Multi-User ligado neste PC. Os outros veem você como host aqui no painel. Ele fecha junto com o app.");
@@ -199,7 +255,11 @@ export function UnrealConnectPanel({
         conexão deste PC.
       </p>
 
-      {oldApp && <div className="error-box">Esta versão do app ainda não conecta o Unreal. Feche e abra o GameForge para atualizar.</div>}
+      {oldApp && (
+        <div className="error-box">
+          Esta versão do app ainda não conecta o Unreal{proj ? " com o projeto numa subpasta" : ""}. Feche e abra o GameForge para atualizar.
+        </div>
+      )}
 
       {!dir ? (
         <button className="primary" disabled={busy} onClick={() => void run(onStartMirror)}>
@@ -209,8 +269,32 @@ export function UnrealConnectPanel({
         <div className="small" style={{ lineHeight: 1.8 }}>
           <div>
             {dot(!!up)}
-            {up === undefined ? "Procurando o projeto…" : up ? <>Projeto: <code>{up.file}</code> (engine {up.association || "?"})</> : "Sem .uproject na raiz da pasta da sala"}
+            {up === undefined ? (
+              "Procurando o projeto…"
+            ) : up ? (
+              <>
+                Projeto: <code>{up.path}</code> (engine {up.association || "?"})
+              </>
+            ) : proj === undefined ? (
+              "Há mais de um projeto (.uproject) na pasta da sala: escolha qual abaixo"
+            ) : (
+              "Nenhum .uproject na pasta da sala nem nas subpastas (até 2 níveis)"
+            )}
           </div>
+          {dirs && dirs.length > 1 && (
+            <select value={proj ?? "?"} onChange={(e) => set({ project: e.target.value })} style={{ width: "100%" }} title="Projetos achados na pasta da sala (escolha vale só neste PC)">
+              {proj === undefined && (
+                <option value="?" disabled>
+                  Escolha o projeto…
+                </option>
+              )}
+              {dirs.map((d) => (
+                <option key={d} value={d}>
+                  {d ? `${d}/` : "Raiz da pasta da sala"}
+                </option>
+              ))}
+            </select>
+          )}
           <div>
             {dot(!!engine)}
             {engines === null ? "Procurando o Unreal…" : engine ? <>Unreal {engine.version}: <code>{engine.root}</code></> : "Unreal não encontrado"}
@@ -219,7 +303,7 @@ export function UnrealConnectPanel({
             {dot(st?.mcp)}MCP na porta {s.mcpPort}: {st?.mcp ? "respondendo" : "desligado (abre com o editor)"}
           </div>
           <div>
-            {dot(!!snap)}Presença do editor: {snap ? `mapa ${mapName(snap.map) || "?"}, ${snap.sel.length} selecionado(s), ${snap.dirty.length + snap.more} modificado(s)` : "sem sinal (editor fechado?)"}
+            {dot(!!snap)}Presença do editor: {snap ? `mapa ${mapName(snap.map) || "?"}, ${snap.sel.length} selecionado(s), ${snap.dirty.length + snap.more} modificado(s)${snap.mu ? " · na sessão do Multi-User" : ""}` : "sem sinal (editor fechado?)"}
           </div>
         </div>
       )}
@@ -233,7 +317,7 @@ export function UnrealConnectPanel({
             onClick={() => {
               if (confirm(`Ligar ${up.missing.join(", ")} no ${up.file}? O .uproject sincroniza: vale para todos da sala. Feche o Unreal antes.`))
                 void run(async () => {
-                  await enablePlugins(dir!, up.file);
+                  await enablePlugins(dir!, up.path);
                   await loadUproject();
                 });
             }}
@@ -244,7 +328,16 @@ export function UnrealConnectPanel({
       )}
       {presenceOff && (
         <div className="note-box small">
-          O <code>Content/Python/init_unreal.py</code> do projeto não liga a presença. Acrescente nele a linha <code>import gameforge_presence</code>.
+          O <code>{pre}Content/Python/init_unreal.py</code> do projeto não liga a presença. Acrescente nele a linha <code>import gameforge_presence</code>.
+        </div>
+      )}
+      {presenceMissing && (
+        <div className="note-box small">
+          O projeto ainda não tem os scripts de presença do GameForge em <code>{pre}Content/Python</code> (sem eles o app não vê o que você seleciona e
+          modifica no editor).{" "}
+          <button className="small" disabled={busy} onClick={() => void createScripts()}>
+            Criar
+          </button>
         </div>
       )}
       {dir && engines !== null && !engine && (
@@ -337,7 +430,10 @@ export function UnrealConnectPanel({
           style={{ width: 110 }}
           title="A mesma de Editor Preferences > Model Context Protocol > Server Port Number (padrão 8000)"
         />
-        <span className="small muted grow">Padrão 8000. Mude só se outro programa usa essa porta.</span>
+        <span className="small muted grow">
+          Cada sala Unreal tem a sua neste PC (a primeira é 8000), para dois projetos abertos não se confundirem. Mude só se outro programa usa
+          essa porta.
+        </span>
       </div>
 
       {msg && <div className="note-box small">{msg}</div>}
@@ -350,7 +446,11 @@ export function UnrealConnectPanel({
         <button disabled={busy || !dir} onClick={() => void run(() => onOpen("vscode"))}>
           Só abrir o Claude
         </button>
-        <button disabled={busy || !dir} onClick={() => void run(() => onOpen("diversion"))} title="Abre o Content/ no app do Diversion (enviar e baixar os assets)">
+        <button
+          disabled={busy || !dir}
+          onClick={() => void run(() => onOpen("diversion", typeof proj === "string" ? proj : null))}
+          title="Abre o Content/ do projeto no app do Diversion (enviar e baixar os assets)"
+        >
           Abrir no Diversion
         </button>
       </div>
@@ -362,12 +462,14 @@ export function UnrealConnectPanel({
         <ol className="steps small">
           <li>Unreal 5.8.1 instalado pelo Epic Games Launcher (todos com a mesma versão).</li>
           <li>
-            Projeto na pasta da sala (o <code>.uproject</code> na raiz). Clique em <b>Ligar plugins</b> se aparecer (Python, Unreal MCP, All Toolsets,
+            Projeto dentro da pasta da sala: o <code>.uproject</code> na raiz dela ou numa subpasta (ex.: a pasta que o Unreal cria com o nome do
+            projeto). O app acha sozinho, não precisa mover nada. Clique em <b>Ligar plugins</b> se aparecer (Python, Unreal MCP, All Toolsets,
             Multi-User). O <code>.uproject</code> sincroniza: basta uma pessoa.
           </li>
           <li>
-            <b>Content/ pelo Diversion</b>: o repositório do Diversion é <b>só a pasta Content</b> (dv clone &lt;repo&gt; para dentro de{" "}
-            <code>Content</code>), com <code>Python/</code> no <code>.dvignore</code> (essa pasta já vem pela sala). Nunca a pasta inteira: o Diversion
+            <b>Content/ pelo Diversion</b>: o repositório do Diversion é <b>só a pasta Content do projeto</b> (dv clone &lt;repo&gt; para dentro de{" "}
+            <code>{pre}Content</code>), com <code>Python/</code> no <code>.dvignore</code> (essa pasta já vem pela sala). Com o token do Diversion no app do
+            dono, a sala ganha um repositório próprio e cada membro é convidado por e-mail: o comando de clone está no 🔒 Unreal. Nunca a pasta inteira: o Diversion
             traria código antigo por cima do que a sala sincroniza. Enviar e baixar: botão <b>Abrir no Diversion</b>.
           </li>
           <li>
@@ -379,7 +481,8 @@ export function UnrealConnectPanel({
           </li>
           <li>
             O que cada pessoa seleciona e modifica no editor aparece no 🔒 Unreal e no <code>.gfs/ASSETS.md</code> do Claude; o modificado é reservado
-            sozinho por 30 min (só com o app e o editor abertos).
+            sozinho por 30 min (só com o app e o editor abertos; dentro de uma sessão do Multi-User o app só avisa, porque o que os outros mudam
+            também aparece como modificado).
           </li>
         </ol>
       </details>

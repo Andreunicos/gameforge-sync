@@ -5,6 +5,53 @@
 // Script do editor Unreal que manda a seleção para o app (só o app; o gfs não cria arquivos de Content/).
 import UE_PRESENCE_PY from "../ue/gameforge_presence.py?raw";
 
+/** Hash (FNV-1a, fim de linha LF) das versões antigas do gameforge_presence.py: a pasta do Claude troca o script da sala
+ * pelo novo só se ele ainda é uma delas, intacta (nunca por cima de um script que alguém mexeu). */
+export const OLD_UE_PRESENCE = [0xab50e001]; // v0.3.1
+export function textHash(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h;
+}
+
+// .claude/settings.json da pasta da sala (só neste PC, não sincroniza). Nomes conferidos na doc do Claude Code
+// (code.claude.com/docs/en/permissions e settings-reference): "/x" = relativo à pasta do projeto; Read também vale para Grep/Glob.
+const CLAUDE_DENY = ["/.gfs/base/**", "/.gfs/backup/**", "/builds/**"].flatMap((p) => [`Read(${p})`, `Edit(${p})`]);
+
+/** Mescla as regras da sala no settings.json atual sem apagar nada. null = não precisa mudar (ou o arquivo não é um JSON que dá para mexer). */
+export function mergeClaudeSettings(current: string | null, kind: string | undefined): string | null {
+  let cfg: unknown;
+  try {
+    cfg = current === null || !current.trim() ? {} : JSON.parse(current);
+  } catch {
+    return null;
+  }
+  const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
+  if (!isObj(cfg)) return null;
+  const perms = cfg.permissions ?? {};
+  if (!isObj(perms) || (perms.deny !== undefined && !Array.isArray(perms.deny))) return null;
+  const deny = (perms.deny as unknown[] | undefined) ?? [];
+  let changed = current === null;
+  for (const r of CLAUDE_DENY) {
+    if (!deny.includes(r)) {
+      deny.push(r);
+      changed = true;
+    }
+  }
+  cfg.permissions = { ...perms, deny };
+  if (kind === "unreal") {
+    const on = cfg.enabledMcpjsonServers ?? [];
+    const off = cfg.disabledMcpjsonServers;
+    if (!Array.isArray(on)) return null;
+    // Quem recusou o servidor de propósito (disabledMcpjsonServers) continua recusando.
+    if (!on.includes("unreal-mcp") && !(Array.isArray(off) && off.includes("unreal-mcp"))) {
+      cfg.enabledMcpjsonServers = [...on, "unreal-mcp"];
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(cfg, null, 2) + "\n" : null;
+}
+
 export const UE_INIT_PY = `# Roda sozinho quando o editor Unreal abre este projeto. Pode acrescentar o seu código abaixo.
 # GameForge Sync: manda para o app o que você seleciona e modifica no editor (presença e reserva automática).
 import gameforge_presence  # noqa: F401
@@ -37,6 +84,9 @@ Você não troca o modelo da sessão sozinho, mas troca DELEGANDO: use a ferrame
 - Diga ao usuário em UMA linha o que escolheu, ex.: "Modelo: Sonnet (tarefa normal)".
 `;
 
+// Linha do CLAUDE.md HTML5 sobre os erros do preview (o app também a acrescenta em salas antigas).
+export const CONSOLE_RULE = "- Algo falhou no jogo (erro, tela preta, travou)? Leia .gfs/CONSOLE.md: os últimos erros do preview do app (só com o app aberto).\n";
+
 // Seção de ideias/bugs (igual nos CLAUDE.md de todos os tipos de sala; o BugsPanel também a usa).
 export const BUGS_SECTION = `## Ideias e bugs (OBRIGATÓRIO)
 - No começo de TODA tarefa, leia IDEIAS_E_BUGS.md (lista que os testadores mandam pelo app). Se tiver itens, trate-os junto com o pedido.
@@ -56,7 +106,7 @@ ${BUGS_SECTION}
 - Antes de abrir um arquivo, consulte .gfs/MAPA.md (funções com nome@linha): ache o nome e leia só aquelas linhas.
 - Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
 - Achou marcadores <<<<<<< ======= >>>>>>> num arquivo: é conflito. Junte as duas versões e apague os marcadores.
-
+${CONSOLE_RULE}
 ## Nunca
 - Desfazer ou reescrever código de outra pessoa sem perguntar.
 - Apagar arquivos (peça ao dono da sala).
@@ -133,7 +183,7 @@ export const ROOM_GAME_MD_ROBLOX = `# GAME.md — visão do jogo (Roblox)
 `;
 
 // ── Salas de Unreal Engine ───────────────────────────────────────────────────
-// A pasta da sala É a raiz do projeto: o código (texto) sincroniza com merge; Content/ (binário) vem por fora
+// O projeto (a pasta do .uproject) fica na raiz da sala ou numa subpasta: o código (texto) sincroniza com merge; Content/ (binário) vem por fora
 // e é protegido por reservas (rooms/{id}/claims/assets), que o app escreve em .gfs/ASSETS.md.
 
 // Bloco do CLAUDE.md Unreal sobre o MCP do editor (o app também o acrescenta em salas Unreal que ainda não têm).
@@ -146,7 +196,8 @@ export const UNREAL_MCP_RULE = `## Editor pelo MCP (servidor unreal-mcp)
 
 export const ROOM_CLAUDE_MD_UNREAL = `# Sala do GameForge Sync (Unreal Engine 5.8.1) — regras para o Claude
 
-Esta pasta é a raiz de um projeto Unreal 5.8.1 compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
+Esta pasta tem um projeto Unreal 5.8.1 compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
+A pasta do projeto é a que tem o .uproject (esta ou uma subpasta); Source/, Config/ e Content/ ficam ao lado dele.
 Com o app GameForge Sync aberto, o CÓDIGO sincroniza sozinho em segundos: Source/, Config/, *.uproject, Plugins/*/Source,
 Content/Python, shaders .usf/.ush. NÃO sincronizam por aqui: Content/ (.uasset/.umap), Binaries/, Intermediate/, Saved/, DerivedDataCache/.
 
@@ -200,6 +251,23 @@ export const ROOM_GAME_MD_UNREAL = `# GAME.md — visão do jogo (Unreal Engine 
 -
 `;
 
+/**
+ * Presença do editor (o que cada um seleciona/modifica) no Content/Python do projeto Unreal (`project` = pasta do .uproject
+ * relativa à sala, "" = raiz): é dali que o editor roda o init_unreal.py ao abrir. Se o projeto já tem o init_unreal.py
+ * dele, a sala não sobrescreve: a pessoa acrescenta a linha `import gameforge_presence`.
+ */
+export function ueScripts(project: string): [path: string, text: string][] {
+  const pre = project ? `${project}/` : "";
+  return [
+    [`${pre}Content/Python/init_unreal.py`, UE_INIT_PY],
+    [`${pre}Content/Python/gameforge_presence.py`, UE_PRESENCE_PY],
+  ];
+}
+
+/** Bloco do CLAUDE.md da sala Unreal quando o projeto está numa subpasta (o app acrescenta uma vez). */
+export const ueProjectRule = (project: string) =>
+  `## Pasta do projeto\n- O projeto Unreal desta sala está em ${project}/ (o .uproject, Source/, Config/ e Content/ ficam lá). Content/..., Source/... e Config/... destas regras e do .gfs/ASSETS.md = ${project}/Content/..., ${project}/Source/..., ${project}/Config/...\n`;
+
 /** Nome de pasta seguro para um local: sem acento, espaço ou símbolo (vira o nome do projeto Rojo). */
 export function placeFolder(name: string): string {
   return name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9_-]+/g, "") || "Local";
@@ -242,14 +310,11 @@ export function roomTemplates(kind: string | undefined, roomName: string): [path
     ];
   }
   if (kind === "unreal") {
+    // Os scripts do editor (ueScripts) só entram quando a sala já tem o projeto: vão para o Content/Python DELE.
     return [
       ["CLAUDE.md", ROOM_CLAUDE_MD_UNREAL],
       ["GAME.md", ROOM_GAME_MD_UNREAL],
       ["MODELOS.md", ROOM_MODELOS_MD],
-      // Presença do editor (o que cada um seleciona/modifica). O Unreal roda o init_unreal.py de Content/Python ao abrir;
-      // se o projeto já tem o dele, a sala não sobrescreve: acrescente a linha `import gameforge_presence`.
-      ["Content/Python/init_unreal.py", UE_INIT_PY],
-      ["Content/Python/gameforge_presence.py", UE_PRESENCE_PY],
     ];
   }
   return [

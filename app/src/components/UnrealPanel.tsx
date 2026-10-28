@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { claimAsset, claimKey, hhmm, releaseAsset, type Claim } from "../claims";
 import { mapName } from "../unreal";
-import type { Author, Presence } from "../types";
+import type { Author, Presence, Room } from "../types";
+import { DiversionBox } from "./DiversionBox";
 import { Modal } from "./Modals";
 
 const HOURS = [1, 2, 4, 8, 12];
 
 export function UnrealPanel({
+  room,
   roomId,
   me,
   claims,
@@ -14,9 +16,11 @@ export function UnrealPanel({
   readOnly,
   isOwner,
   dir,
+  project,
   people,
   onClose,
 }: {
+  room: Room;
   roomId: string;
   me: Author;
   claims: Claim[];
@@ -24,6 +28,8 @@ export function UnrealPanel({
   readOnly: boolean;
   isOwner: boolean;
   dir?: string;
+  /** Pasta do projeto relativa à sala ("" = raiz; null/undefined = nenhum ainda / vários sem escolha). */
+  project?: string | null;
   people: Presence[];
   onClose: () => void;
 }) {
@@ -141,11 +147,14 @@ export function UnrealPanel({
       )}
       {error && <div className="error-box">{error}</div>}
 
+      <DiversionBox room={room} meUid={me.uid} isOwner={isOwner} project={project} />
+
       <h4 style={{ marginBottom: 6 }}>Como a sala Unreal funciona</h4>
       <ul className="small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
         <li>
-          A pasta da sala{dir ? <> (<code>{dir}</code>)</> : ""} é a raiz do projeto Unreal 5.8.1: ponha nela o <code>.uproject</code>, <code>Source/</code>,{" "}
-          <code>Config/</code> e <code>Content/</code>. Todos com a mesma versão da engine.
+          O projeto Unreal 5.8.1 fica na pasta da sala{dir ? <> (<code>{dir}</code>)</> : ""} ou numa subpasta dela (ex.: a pasta que o Unreal cria com o
+          nome do projeto): o app acha o <code>.uproject</code> sozinho, não precisa mover nada.
+          {project ? <> Projeto desta sala: <code>{project}/</code>.</> : ""} Todos com a mesma versão da engine.
         </li>
         <li>Sincroniza sozinho (com merge): C++, .cs, .ini, .py, .usf/.ush, .uproject/.uplugin. Não sincroniza: Content/ (só Content/Python), Binaries, Intermediate, Saved, DerivedDataCache.</li>
         <li>Content/ chega a cada um por fora (Diversion, Perforce, Git LFS ou zip). Mudou .h ou .Build.cs de alguém: feche o editor e recompile.</li>

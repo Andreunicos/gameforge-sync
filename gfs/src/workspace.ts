@@ -1,8 +1,21 @@
 // A pasta local que espelha a sala. Em .gfs/ ficam o estado e a "base" de cada arquivo
 // (a última versão da sala de onde o texto local partiu) — é ela que permite o merge de 3 vias.
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
-import { IGNORE_DIRS, TEXT_EXT } from "./config.ts";
+import { dirname, join } from "node:path";
+import { IGNORE_PATH, UE_PROJECT_SKIP, UNREAL_IGNORE_PATH, isCodePath } from "./fileKinds.ts";
+
+/** Tem .uproject na pasta ou em subpasta até 2 níveis (sem entrar em pasta com ponto, gerada ou link). */
+function hasUproject(dir: string, depth = 0): boolean {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).some((e) =>
+      e.isFile()
+        ? /\.uproject$/i.test(e.name)
+        : e.isDirectory() && depth < 2 && !e.name.startsWith(".") && !UE_PROJECT_SKIP.test(e.name) && hasUproject(join(dir, e.name), depth + 1),
+    );
+  } catch {
+    return false;
+  }
+}
 
 export interface FileState {
   version: number;
@@ -92,20 +105,25 @@ export class Workspace {
     delete this.state.files[path];
   }
 
-  /** Todos os arquivos de código da pasta (caminhos com "/"). */
+  /**
+   * Todos os arquivos de código da pasta (caminhos com "/"), com as mesmas regras da pasta do Claude no app
+   * (fileKinds.ts). Pasta com .uproject (na raiz ou numa subpasta, como acha o app) = sala Unreal: Content/, Binaries/,
+   * Intermediate/, Saved/... ficam de fora em qualquer nível.
+   */
   scan(): string[] {
+    const unreal = hasUproject(this.root);
+    const ignored = (rel: string) => IGNORE_PATH.test(rel) || (unreal && UNREAL_IGNORE_PATH.test(rel));
     const out: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        if (name.startsWith(".") && name !== ".gfs") continue;
-        if (IGNORE_DIRS.has(name)) continue;
-        const full = join(dir, name);
-        const st = statSync(full);
-        if (st.isDirectory()) walk(full);
-        else if (TEXT_EXT.test(name)) out.push(relative(this.root, full).split(sep).join("/"));
+    const walk = (rel: string) => {
+      for (const name of readdirSync(rel ? this.abs(rel) : this.root)) {
+        const p = rel ? `${rel}/${name}` : name;
+        if (name.startsWith(".") || ignored(p)) continue;
+        const st = statSync(this.abs(p));
+        if (st.isDirectory()) walk(p);
+        else if (st.isFile() && isCodePath(p)) out.push(p);
       }
     };
-    walk(this.root);
+    walk("");
     return out.sort();
   }
 
@@ -118,7 +136,8 @@ export class Workspace {
       if (!this.state.files[p]) added.push(p);
       else if (this.readLocal(p) !== this.readBase(p)) changed.push(p);
     }
-    const removed = Object.keys(this.state.files).filter((p) => !local.has(p));
+    // Só o que sumiu mesmo do disco (um arquivo que as regras de hoje não varrem não conta como apagado).
+    const removed = Object.keys(this.state.files).filter((p) => !local.has(p) && this.readLocal(p) === null);
     return { changed, added, removed };
   }
 }

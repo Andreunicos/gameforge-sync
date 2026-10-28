@@ -23,7 +23,9 @@
     "allow-unreal-open",
     "allow-unreal-server-start",
     "allow-unreal-server-stop",
-    "allow-unreal-status"
+    "allow-unreal-status",
+    "allow-close-guard",
+    "allow-app-close"
   ],
   "remote": {
     "urls": [

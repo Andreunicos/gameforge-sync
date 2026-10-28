@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { buildPreview, findEntry } from "../preview";
+import { CONSOLE_MAX, buildPreview, consoleMd, findEntry, type ConsoleError } from "../preview";
 import type { RoomSync } from "../sync/roomSync";
 import type { Room } from "../types";
 
@@ -26,7 +26,8 @@ interface LogLine {
 // Junta várias mudanças seguidas num reload só, para o jogo não piscar a cada tecla.
 const RELOAD_DEBOUNCE_MS = 1500;
 
-export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
+/** `onConsole`: texto do .gfs/CONSOLE.md (erros desde o último recarregamento), só quando ele muda. */
+export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: Room; onConsole?: (md: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [auto, setAuto] = useState(true);
   const [device, setDevice] = useState<Device>("free");
@@ -89,6 +90,39 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
   const autoRef = useRef(auto);
   autoRef.current = auto;
 
+  // Erros desta execução do jogo para o .gfs/CONSOLE.md do Claude (repetido não conta de novo: game loop com erro não vira spam).
+  const errs = useRef(new Map<string, ConsoleError>());
+  const dropped = useRef(false);
+  const lastMd = useRef<string | null>(null);
+  const mdTimer = useRef<number | undefined>(undefined);
+  const onConsoleRef = useRef(onConsole);
+  onConsoleRef.current = onConsole;
+  const flushConsole = useCallback(() => {
+    window.clearTimeout(mdTimer.current);
+    mdTimer.current = window.setTimeout(() => {
+      const md = consoleMd([...errs.current.values()], dropped.current);
+      if (md === lastMd.current || !onConsoleRef.current) return;
+      lastMd.current = md;
+      onConsoleRef.current(md);
+    }, 1500);
+  }, []);
+  const noteError = (text: string) => {
+    const key = text.slice(0, 500);
+    const e = errs.current.get(key);
+    if (e) {
+      if (e.again) return;
+      e.again = true;
+    } else if (errs.current.size >= CONSOLE_MAX) {
+      if (dropped.current) return;
+      dropped.current = true;
+    } else {
+      errs.current.set(key, { text: key, at: Date.now(), again: false });
+    }
+    flushConsole();
+  };
+  const noteErrorRef = useRef(noteError);
+  noteErrorRef.current = noteError;
+
   const reload = useCallback(() => {
     const { html, warnings } = buildPreview({
       paths: sync.paths(),
@@ -98,8 +132,11 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
       storage: storage.current,
     });
     setLogs(warnings.map((text) => ({ level: "warn", text })));
+    errs.current.clear();
+    dropped.current = false;
+    flushConsole();
     if (frame.current) frame.current.srcdoc = html;
-  }, [sync, room.assetsBase, entry]);
+  }, [sync, room.assetsBase, entry, flushConsole]);
 
   useEffect(() => {
     reload();
@@ -113,6 +150,8 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
       window.clearTimeout(timer.current);
     };
   }, [sync, reload]);
+
+  useEffect(() => () => window.clearTimeout(mdTimer.current), []);
 
   useEffect(() => {
     const on = (e: MessageEvent) => {
@@ -129,6 +168,7 @@ export function PreviewPane({ sync, room }: { sync: RoomSync; room: Room }) {
         else setLogs((l) => [...l, { level: "warn", text: `O jogo tentou abrir ${d.nav}, mas essa página não existe na sala.` }]);
         return;
       }
+      if (d.level === "error") noteErrorRef.current(String(d.text));
       setLogs((l) => [...l.slice(-199), { level: String(e.data.level), text: String(e.data.text) }]);
     };
     window.addEventListener("message", on);

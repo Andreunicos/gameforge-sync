@@ -19,6 +19,7 @@ import { db } from "./firebase";
 import { displayName } from "./auth";
 import { countWrite } from "./usage";
 import { APP_VERSION } from "./config";
+import { getDvToken } from "./diversion";
 import type { ActivityEvent, Author, Role, Room, RoomKind } from "./types";
 
 export function authorOf(user: User): Author {
@@ -57,11 +58,14 @@ export async function addMember(owner: User, roomId: string, p: Profile, role: R
   await logActivity(roomId, authorOf(owner), { kind: "join", summary: `adicionou ${p.name} à sala` });
 }
 
-export function watchMyRooms(uid: string, cb: (rooms: Room[]) => void, onError: (e: Error) => void) {
+/** `serverOnly`: ignora o retrato do cache em disco (quem age sobre as salas, como os convites do Diversion). */
+export function watchMyRooms(uid: string, cb: (rooms: Room[]) => void, onError: (e: Error) => void, serverOnly = false) {
   const q = query(collection(db, "rooms"), where("memberIds", "array-contains", uid));
   return onSnapshot(
     q,
+    { includeMetadataChanges: serverOnly },
     (snap) => {
+      if (serverOnly && snap.metadata.fromCache) return;
       const rooms = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Room);
       rooms.sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
       cb(rooms);
@@ -89,6 +93,8 @@ export async function createRoom(user: User, name: string, kind: RoomKind = "htm
     minAppVersion: APP_VERSION,
     kind,
     assetsBase: "",
+    // Sala Unreal com o token do Diversion neste PC: pede o repositório (o app do dono cria, ver diversionSync.ts).
+    ...(kind === "unreal" && getDvToken() ? { diversion: {} } : {}),
     createdAt: serverTimestamp(),
   });
   countWrite();
@@ -153,7 +159,7 @@ export async function deleteRoom(room: Room, onProgress?: (n: number) => void) {
   countWrite();
 }
 
-export async function updateRoomSettings(roomId: string, data: Partial<Pick<Room, "name" | "assetsBase" | "minAppVersion">>) {
+export async function updateRoomSettings(roomId: string, data: Partial<Pick<Room, "name" | "assetsBase" | "minAppVersion" | "diversion">>) {
   await updateDoc(doc(db, "rooms", roomId), data);
   countWrite();
 }

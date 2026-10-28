@@ -3,8 +3,10 @@ import { firebaseReady } from "./config";
 import { SetupScreen } from "./components/SetupScreen";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./Home";
+import { useCloseGuard } from "./closeGuard";
 
 export default function App() {
+  useCloseGuard();
   return (
     <div className="app-shell">
       <UpdateBanner />

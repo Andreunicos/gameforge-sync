@@ -175,3 +175,30 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
 
   return { html: "<!doctype html>\n" + doc.documentElement.outerHTML, warnings };
 }
+
+export interface ConsoleError {
+  text: string;
+  /** Primeira vez nesta execução do preview (ms). */
+  at: number;
+  /** Repetiu depois da primeira vez (sem contar quantas: assim o arquivo não muda a cada repetição). */
+  again: boolean;
+}
+
+export const CONSOLE_MAX = 30;
+
+/**
+ * .gfs/CONSOLE.md da pasta do Claude: os erros do preview desde o último recarregamento, o mais recente primeiro.
+ * Sem horário de geração nem contagem: o texto só muda quando aparece erro novo (o app só grava quando muda).
+ */
+export function consoleMd(errors: ConsoleError[], dropped = false): string {
+  const hm = (ms: number) => new Date(ms).toLocaleTimeString("pt-BR");
+  const rows = [...errors]
+    .sort((a, b) => b.at - a.at)
+    .map((e) => `- ${hm(e.at)}${e.again ? " (repetiu)" : ""} ${e.text.replace(/\s*\n\s*/g, " ⏎ ")}`);
+  return `# Console do preview (erros)
+Gerado pelo app GameForge Sync (não edite; não sincroniza). Erros do jogo no preview do app desde o último recarregamento.
+Só vale com o app aberto e o preview ligado. Corrigiu? O preview recarrega sozinho e esta lista recomeça.
+
+${rows.length ? rows.join("\n") : "Nenhum erro desde o último recarregamento do preview."}${dropped ? `\n- … e mais erros diferentes (só os ${CONSOLE_MAX} primeiros aparecem)` : ""}
+`;
+}

@@ -33,6 +33,8 @@ export class RoomSync {
   private remote = new Map<string, RemoteFile>();
   /** Versão de cada arquivo grande que está sendo montada agora. */
   private bigWanted = new Map<string, number>();
+  /** Arquivos grandes sendo montados antes da sala ficar pronta. */
+  private firstBig: Promise<void>[] = [];
   private sessions = new Map<string, FileSession>();
   private lastEditActivity = new Map<string, number>();
   private unsubFiles: () => void;
@@ -52,22 +54,31 @@ export class RoomSync {
   ) {
     this.unsubFiles = onSnapshot(
       collection(db, "rooms", roomId, "files"),
+      { includeMetadataChanges: true }, // para saber quando o retrato do cache foi confirmado pelo servidor
       (snap) => {
-        const big: Promise<void>[] = [];
-        for (const ch of snap.docChanges()) {
+        const changes = snap.docChanges();
+        for (const ch of changes) {
           const f = { id: ch.doc.id, ...ch.doc.data() } as RemoteFile;
           if (ch.type === "removed") {
             this.bigWanted.delete(f.path);
             this.apply(f.path, null);
           } else if (f.parts) {
-            big.push(this.loadBig(f));
+            const p = this.loadBig(f);
+            if (!this.state.loaded) this.firstBig.push(p);
           } else {
             this.bigWanted.delete(f.path);
             this.apply(f.path, f);
           }
         }
-        // Na primeira carga a sala só fica "pronta" com os arquivos grandes montados.
-        if (!this.state.loaded && big.length) void Promise.all(big).then(() => this.publish());
+        if (this.state.loaded) {
+          if (changes.length) this.publish();
+          return;
+        }
+        // O primeiro retrato pode vir do cache em disco (velho): a sala só fica "pronta" (pasta do Claude, backups)
+        // com o do servidor, e com os arquivos grandes montados.
+        if (snap.metadata.fromCache) return;
+        const big = this.firstBig.splice(0);
+        if (big.length) void Promise.all(big).then(() => this.publish());
         else this.publish();
       },
       (e) => this.set({ error: e.message }),
@@ -327,6 +338,11 @@ export class RoomSync {
           .map((p) => ({ uid: p.uid, name: p.name, color: p.color, line: p.line, col: p.col })),
       );
     }
+  }
+
+  /** Grava agora o que os editores ainda esperavam a pausa de 2 s para gravar (janela fechando). */
+  async flush() {
+    await Promise.all([...this.sessions.values()].map((s) => s.flush().catch(() => {})));
   }
 
   async close() {

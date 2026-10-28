@@ -56,7 +56,7 @@ fn free_port(start: u16) -> Option<u16> {
 }
 
 /// Liga o Rojo de um local (pasta `place` dentro da sala). Devolve a porta usada (se já estava ligado, a mesma de antes).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rojo_start(app: tauri::AppHandle, state: State<RojoState>, dir: String, place: String, port: u16) -> Result<u16, String> {
     let room = check_room_dir(&app, &dir)?;
     // `place` é uma pasta direta da sala: nada de caminhos, ".." ou pastas do próprio app.
@@ -97,7 +97,7 @@ pub fn rojo_start(app: tauri::AppHandle, state: State<RojoState>, dir: String, p
 }
 
 /// Desliga os Rojos de uma sala (todos os locais).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rojo_stop(state: State<RojoState>, dir: String) -> Result<(), String> {
     let prefix = format!("{dir}|");
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
@@ -131,7 +131,7 @@ fn plugin_file() -> Option<PathBuf> {
 }
 
 /// O que há neste PC: versão do Rojo (se achar) e se o plugin do Studio está instalado.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rojo_info(app: tauri::AppHandle) -> RojoInfo {
     RojoInfo {
         version: find_rojo(&app).and_then(|r| rojo_version(&r)),

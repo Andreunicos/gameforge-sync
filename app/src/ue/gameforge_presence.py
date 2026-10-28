@@ -1,6 +1,6 @@
 # GameForge Sync: conta ao app o que esta pessoa tem aberto e selecionado no editor, e o que ela modificou
 # e ainda não salvou. O app mostra para a sala (presença) e reserva sozinho o que foi modificado.
-# Roda sozinho ao abrir o editor (o init_unreal.py da sala importa este módulo). Só escreve em .gfs/ (não sincroniza).
+# Roda sozinho ao abrir o editor (o init_unreal.py do projeto importa este módulo). Só escreve em .gfs/ (não sincroniza).
 # O Python do editor não tem evento de "seleção mudou": lê a cada 2 s (custa pouco) e só grava o arquivo quando
 # algo muda, mais um sinal de vida a cada 10 s (sem sinal por 30 s o app entende que o editor fechou).
 import json
@@ -9,7 +9,19 @@ import time
 
 import unreal
 
-_GFS = os.path.join(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()), ".gfs")
+
+def _room_gfs():
+    # O projeto (pasta do .uproject) é a pasta da sala ou uma subpasta dela até 2 níveis: a .gfs da sala (a que tem
+    # state.json) fica nele ou até 2 pastas acima. Não sobe mais que isso (a ~/.gfs do gfs não é sala: não tem state.json).
+    d = os.path.normpath(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
+    for _ in range(3):
+        if os.path.isfile(os.path.join(d, ".gfs", "state.json")):
+            return os.path.join(d, ".gfs")
+        d = os.path.dirname(d)
+    return ""
+
+
+_GFS = _room_gfs()
 _OUT = os.path.join(_GFS, "ue-presence.json")
 _EVERY = 2.0
 _BEAT = 10.0
@@ -25,6 +37,16 @@ def _pkg(obj):
         return obj.get_outermost().get_name()
 
 
+def _in_session():
+    # Multi-User: em sessão, o que outra pessoa muda também aparece como modificado aqui (a transação remota chama
+    # Modify()), então o app não reserva sozinho. Sem o plugin (AttributeError) ou qualquer erro: fora de sessão.
+    try:
+        st = unreal.MultiUserClientStatics.get_multi_user_connection_status_detail()
+        return st == unreal.MultiUserConnectionStatus.CONNECTED
+    except Exception:
+        return False
+
+
 def _snapshot():
     world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_selected_level_actors()
@@ -34,7 +56,7 @@ def _snapshot():
     names = set(p.get_name() for p in list(utils.get_dirty_map_packages()) + list(utils.get_dirty_content_packages()))
     # Só o que é do projeto (/Game): plugins e pacotes temporários (/Temp, /Engine) ficam de fora.
     dirty = sorted(n for n in names if n.startswith("/Game/"))
-    return {"map": _pkg(world) if world else "", "sel": sel, "dirty": dirty[:_MAX], "more": max(0, len(dirty) - _MAX)}
+    return {"map": _pkg(world) if world else "", "sel": sel, "dirty": dirty[:_MAX], "more": max(0, len(dirty) - _MAX), "mu": _in_session()}
 
 
 def _write(data):
@@ -68,8 +90,8 @@ def _bye():
         pass
 
 
-# Só numa pasta de sala do GameForge (tem .gfs); aberto de outro lugar, não faz nada.
-if os.path.isdir(_GFS) and not getattr(unreal, "_gameforge_presence", False):
+# Só num projeto dentro de uma pasta de sala do GameForge; aberto de outro lugar, não faz nada.
+if _GFS and not getattr(unreal, "_gameforge_presence", False):
     unreal._gameforge_presence = True  # importado de novo (reload): não registra duas vezes
     unreal.register_slate_post_tick_callback(_tick)
     unreal.register_python_shutdown_callback(_bye)

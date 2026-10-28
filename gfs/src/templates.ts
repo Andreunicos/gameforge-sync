@@ -29,6 +29,9 @@ Você não troca o modelo da sessão sozinho, mas troca DELEGANDO: use a ferrame
 - Diga ao usuário em UMA linha o que escolheu, ex.: "Modelo: Sonnet (tarefa normal)".
 `;
 
+// Linha do CLAUDE.md HTML5 sobre os erros do preview (o app também a acrescenta em salas antigas).
+export const CONSOLE_RULE = "- Algo falhou no jogo (erro, tela preta, travou)? Leia .gfs/CONSOLE.md: os últimos erros do preview do app (só com o app aberto).\n";
+
 // Seção de ideias/bugs (igual nos CLAUDE.md de todos os tipos de sala; o BugsPanel também a usa).
 export const BUGS_SECTION = `## Ideias e bugs (OBRIGATÓRIO)
 - No começo de TODA tarefa, leia IDEIAS_E_BUGS.md (lista que os testadores mandam pelo app). Se tiver itens, trate-os junto com o pedido.
@@ -48,7 +51,7 @@ ${BUGS_SECTION}
 - Antes de abrir um arquivo, consulte .gfs/MAPA.md (funções com nome@linha): ache o nome e leia só aquelas linhas.
 - Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
 - Achou marcadores <<<<<<< ======= >>>>>>> num arquivo: é conflito. Junte as duas versões e apague os marcadores.
-
+${CONSOLE_RULE}
 ## Nunca
 - Desfazer ou reescrever código de outra pessoa sem perguntar.
 - Apagar arquivos (peça ao dono da sala).
@@ -125,7 +128,7 @@ export const ROOM_GAME_MD_ROBLOX = `# GAME.md — visão do jogo (Roblox)
 `;
 
 // ── Salas de Unreal Engine ───────────────────────────────────────────────────
-// A pasta da sala É a raiz do projeto: o código (texto) sincroniza com merge; Content/ (binário) vem por fora
+// O projeto (a pasta do .uproject) fica na raiz da sala ou numa subpasta: o código (texto) sincroniza com merge; Content/ (binário) vem por fora
 // e é protegido por reservas (rooms/{id}/claims/assets), que o app escreve em .gfs/ASSETS.md.
 
 // Bloco do CLAUDE.md Unreal sobre o MCP do editor (o app também o acrescenta em salas Unreal que ainda não têm).
@@ -138,7 +141,8 @@ export const UNREAL_MCP_RULE = `## Editor pelo MCP (servidor unreal-mcp)
 
 export const ROOM_CLAUDE_MD_UNREAL = `# Sala do GameForge Sync (Unreal Engine 5.8.1) — regras para o Claude
 
-Esta pasta é a raiz de um projeto Unreal 5.8.1 compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
+Esta pasta tem um projeto Unreal 5.8.1 compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
+A pasta do projeto é a que tem o .uproject (esta ou uma subpasta); Source/, Config/ e Content/ ficam ao lado dele.
 Com o app GameForge Sync aberto, o CÓDIGO sincroniza sozinho em segundos: Source/, Config/, *.uproject, Plugins/*/Source,
 Content/Python, shaders .usf/.ush. NÃO sincronizam por aqui: Content/ (.uasset/.umap), Binaries/, Intermediate/, Saved/, DerivedDataCache/.
 

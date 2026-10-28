@@ -28,7 +28,7 @@ fn usable_for(dir: &Path, room_id: &str) -> bool {
 
 /// Escolhe, cria e libera (só para esta sessão) a pasta da sala dentro da pasta do usuário.
 /// Se já existir uma pasta com esse nome que não é desta sala (ex.: "Documents"), usa nome-<id>.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn room_dir(app: tauri::AppHandle, slug: String, room_id: String) -> Result<String, String> {
     let ok_name = |s: &str| {
         !s.is_empty()
@@ -67,11 +67,11 @@ pub(crate) fn check_room_dir(app: &tauri::AppHandle, dir: &str) -> Result<PathBu
     Ok(target)
 }
 
-#[tauri::command]
-pub fn open_with(app: tauri::AppHandle, tool: String, dir: String) -> Result<(), String> {
+#[tauri::command(async)]
+pub fn open_with(app: tauri::AppHandle, tool: String, dir: String, project: Option<String>) -> Result<(), String> {
     let target = check_room_dir(&app, &dir)?;
     if tool == "diversion" {
-        return crate::unreal::diversion_view(&app, &target);
+        return crate::unreal::diversion_view(&app, &target, project.as_deref());
     }
     spawn(&tool, &target)
 }

@@ -1,12 +1,13 @@
 // Salas Unreal, lado do PC: "Conectar Unreal" (engine instalada, .mcp.json, editor com o MCP oficial e o Multi-User,
-// servidor do Multi-User de quem hospeda) e a presença do editor: o script Content/Python/gameforge_presence.py
-// escreve em .gfs/ue-presence.json o mapa aberto, a seleção e o que foi modificado; o app publica a seleção na
+// servidor do Multi-User de quem hospeda) e a presença do editor: o script Content/Python/gameforge_presence.py do
+// projeto (na raiz da sala ou numa subpasta) escreve no .gfs/ue-presence.json da sala o mapa aberto, a seleção e o que foi modificado; o app publica a seleção na
 // presença (Realtime Database, não gasta gravação do Firestore) e reserva sozinho, por pouco tempo, o que foi modificado.
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { exists, readDir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { autoClaim, claimKey, hhmm, overlaps, type Claim } from "./claims";
+import { UE_PROJECT_SKIP } from "./sync/fileKinds";
 import type { RoomSync } from "./sync/roomSync";
 import type { Author, Presence } from "./types";
 
@@ -31,6 +32,8 @@ export interface UeSettings {
   addr: string;
   /** Só para quem hospeda em VPN: IP:porta fixa deste PC. Vazio = rede local. */
   unicast: string;
+  /** Pasta do projeto escolhida quando a sala tem mais de um .uproject (relativa à sala, "" = raiz). */
+  project?: string;
 }
 
 /** O que o script do editor escreve em .gfs/ue-presence.json. */
@@ -39,6 +42,8 @@ export interface UeSnap {
   sel: { l: string; p: string; n: string }[];
   dirty: string[];
   more: number;
+  /** Editor conectado numa sessão do Multi-User (script novo; ausente = script antigo, tratado como fora de sessão). */
+  mu: boolean;
 }
 
 /** Plugins que a sala precisa no .uproject (nomes dos .uplugin da 5.8). */
@@ -70,13 +75,54 @@ export const mapName = (pkg: string) => pkg.slice(pkg.lastIndexOf("/") + 1);
 
 // ── configuração local ───────────────────────────────────────────────────
 
+/**
+ * Porta do MCP de uma sala neste PC: a que ela já usa; senão a menor a partir da 8000 que nenhuma outra sala Unreal
+ * deste PC usa (dois projetos abertos na mesma porta = o .mcp.json de uma sala falaria com o editor da outra).
+ * Duas salas gravadas com a mesma porta (versões antigas davam 8000 a todas): fica com a de menor id, a outra muda.
+ */
+export function pickMcpPort(roomId: string, saved: Record<string, number | undefined>): number {
+  const others = Object.entries(saved).filter(([id, p]) => id !== roomId && typeof p === "number") as [string, number][];
+  const mine = saved[roomId];
+  if (mine && !others.some(([id, p]) => p === mine && id < roomId)) return mine;
+  const used = new Set(others.map(([, p]) => p));
+  let p = DEFAULT_MCP_PORT;
+  while (used.has(p)) p++;
+  return p;
+}
+
+/** Portas do MCP gravadas por todas as salas Unreal deste PC (localStorage gfs-ue-<sala>). */
+function savedMcpPorts(): Record<string, number | undefined> {
+  const out: Record<string, number | undefined> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith("gfs-ue-")) continue;
+      try {
+        out[k.slice(7)] = Number(JSON.parse(localStorage.getItem(k) ?? "{}").mcpPort) || undefined;
+      } catch {
+        /* configuração estragada: ignora */
+      }
+    }
+  } catch {
+    /* sem storage */
+  }
+  return out;
+}
+
 export function loadSettings(roomId: string, roomSlugName: string): UeSettings {
   const d: UeSettings = { root: "", mcpPort: DEFAULT_MCP_PORT, multi: false, server: "gameforge", session: ueName(roomSlugName, 60), addr: "", unicast: "" };
+  let s = d;
   try {
-    return { ...d, ...JSON.parse(localStorage.getItem(`gfs-ue-${roomId}`) ?? "{}") };
+    s = { ...d, ...JSON.parse(localStorage.getItem(`gfs-ue-${roomId}`) ?? "{}") };
   } catch {
     return d;
   }
+  const port = pickMcpPort(roomId, savedMcpPorts());
+  if (port !== s.mcpPort || !localStorage.getItem(`gfs-ue-${roomId}`)) {
+    s = { ...s, mcpPort: port };
+    saveSettings(roomId, s); // grava já: a próxima sala que abrir vê esta porta ocupada
+  }
+  return s;
 }
 
 export function saveSettings(roomId: string, s: UeSettings) {
@@ -103,31 +149,71 @@ export function pickEngine(engines: Engine[], saved: string, association: string
 
 // ── projeto ──────────────────────────────────────────────────────────────
 
+/**
+ * Pastas da sala com .uproject (relativas, "" = raiz), a partir dos caminhos dos arquivos da sala: a raiz e subpastas até
+ * 2 níveis (o Unreal cria o projeto numa pasta com o nome dele), fora das pastas geradas e das com ponto. Mesmas regras
+ * da busca do Rust (projects em unreal.rs), que confere a escolha no disco. Raiz primeiro.
+ */
+export function projectDirs(paths: string[]): string[] {
+  const out = new Set<string>();
+  for (const p of paths) {
+    if (!/\.uproject$/i.test(p)) continue;
+    const segs = p.split("/").slice(0, -1);
+    if (segs.length <= 2 && !segs.some((s) => !s || s.startsWith(".") || UE_PROJECT_SKIP.test(s))) out.add(segs.join("/"));
+  }
+  return [...out].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+}
+
+/** Qual projeto usar: o escolhido neste PC (se ainda existe), senão o da raiz, senão o único. null = nenhum; undefined = vários, a pessoa escolhe. */
+export function pickProject(dirs: string[], saved?: string): string | null | undefined {
+  if (!dirs.length) return null;
+  if (saved !== undefined && dirs.includes(saved)) return saved;
+  if (dirs.includes("")) return "";
+  return dirs.length === 1 ? dirs[0] : undefined;
+}
+
+/** O projeto desta sala neste PC, pelos caminhos dos arquivos da sala (com a escolha salva no 🔌 Conectar Unreal). */
+export function roomProject(roomId: string, paths: string[]): string | null | undefined {
+  let saved: string | undefined;
+  try {
+    const p = JSON.parse(localStorage.getItem(`gfs-ue-${roomId}`) ?? "{}").project;
+    if (typeof p === "string") saved = p;
+  } catch {
+    /* sem storage ou configuração estragada */
+  }
+  return pickProject(projectDirs(paths), saved);
+}
+
 export interface Uproject {
+  /** Nome do arquivo (TesteUnreal.uproject). */
   file: string;
+  /** Caminho relativo à sala (TesteUnreal/TesteUnreal.uproject). */
+  path: string;
   association: string;
   missing: string[];
 }
 
-/** O .uproject da raiz da sala (null se ainda não tem) e quais plugins da sala faltam ligar nele. */
-export async function readUproject(dir: string): Promise<Uproject | null> {
-  const files = (await readDir(dir)).filter((e) => e.isFile && /\.uproject$/i.test(e.name));
+/** O .uproject da pasta do projeto (`project` relativa à sala, "" = raiz; null se não tem) e quais plugins da sala faltam nele. */
+export async function readUproject(dir: string, project: string): Promise<Uproject | null> {
+  const pdir = project ? await join(dir, ...project.split("/")) : dir;
+  const files = (await readDir(pdir)).filter((e) => e.isFile && /\.uproject$/i.test(e.name));
   if (files.length === 0) return null;
-  if (files.length > 1) throw new Error("Há mais de um .uproject na pasta da sala: deixe só um.");
+  if (files.length > 1) throw new Error(`Há mais de um .uproject em ${project || "pasta da sala"}: deixe só um.`);
   const file = files[0].name;
+  const path = project ? `${project}/${file}` : file;
   let p: { EngineAssociation?: string; Plugins?: { Name: string; Enabled: boolean }[] };
   try {
-    p = JSON.parse(await readTextFile(await join(dir, file)));
+    p = JSON.parse(await readTextFile(await join(pdir, file)));
   } catch {
-    throw new Error(`${file} não é um JSON válido (marcadores de conflito <<<<<<< dentro dele?).`);
+    throw new Error(`${path} não é um JSON válido (marcadores de conflito <<<<<<< dentro dele?).`);
   }
   const on = new Set((p.Plugins ?? []).filter((x) => x.Enabled).map((x) => x.Name));
-  return { file, association: p.EngineAssociation ?? "", missing: UE_PLUGINS.filter((n) => !on.has(n)) };
+  return { file, path, association: p.EngineAssociation ?? "", missing: UE_PLUGINS.filter((n) => !on.has(n)) };
 }
 
-/** Liga no .uproject os plugins que faltam. O .uproject sincroniza: vale para a sala toda. */
-export async function enablePlugins(dir: string, file: string) {
-  const f = await join(dir, file);
+/** Liga no .uproject (`path` relativo à sala) os plugins que faltam. O .uproject sincroniza: vale para a sala toda. */
+export async function enablePlugins(dir: string, path: string) {
+  const f = await join(dir, ...path.split("/"));
   const p = JSON.parse(await readTextFile(f)) as { Plugins?: { Name: string; Enabled: boolean }[] };
   const list = (p.Plugins ??= []);
   for (const name of UE_PLUGINS) {
@@ -162,13 +248,14 @@ export async function writeMcpJson(dir: string, port: number) {
 export const findEngines = (extra: string) => invoke<Engine[]>("unreal_engines", { extra: extra || null });
 export const ueStatus = (dir: string, mcpPort: number) => invoke<UeStatus>("unreal_status", { dir, mcpPort });
 
-export function openEditor(dir: string, s: UeSettings, displayName: string) {
+// `project` = pasta do projeto relativa à sala: o Rust só aceita se ela for uma das que ele mesmo acha na sala.
+export function openEditor(dir: string, s: UeSettings, displayName: string, project: string) {
   const concert = s.multi ? { server: s.server, session: s.session, displayName: ueName(displayName), staticAddr: s.addr.trim() } : null;
-  return invoke<string>("unreal_open", { dir, root: s.root, mcpPort: s.mcpPort, concert });
+  return invoke<string>("unreal_open", { dir, root: s.root, mcpPort: s.mcpPort, concert, project });
 }
 
-export const startServer = (dir: string, s: UeSettings) =>
-  invoke<void>("unreal_server_start", { dir, root: s.root, server: s.server, session: s.session, unicast: s.unicast.trim() });
+export const startServer = (dir: string, s: UeSettings, project: string) =>
+  invoke<void>("unreal_server_start", { dir, root: s.root, server: s.server, session: s.session, unicast: s.unicast.trim(), project });
 export const stopServer = (dir: string) => invoke<void>("unreal_server_stop", { dir });
 
 // ── presença do editor + reserva automática ──────────────────────────────
@@ -184,11 +271,15 @@ async function readSnap(dir: string): Promise<UeSnap | null> {
         : [],
       dirty: Array.isArray(raw.dirty) ? raw.dirty.filter((x: unknown) => typeof x === "string") : [],
       more: Number(raw.more) || 0,
+      mu: raw.mu === true,
     };
   } catch {
     return null; // editor fechado, script desligado, ou arquivo sendo trocado
   }
 }
+
+/** O editor deste projeto está aberto? (o script de presença deu sinal de vida há menos de 30 s) */
+export const editorAlive = async (dir: string) => (await readSnap(dir)) !== null;
 
 /**
  * Lê o que o editor desta pessoa manda (a cada 2 s), publica mapa + seleção na presença e reserva sozinho o que
@@ -220,6 +311,21 @@ export function useUnrealLive(roomId: string, sync: RoomSync, me: Author, dir: s
     const claimDirty = (s: UeSnap) => {
       const now = Date.now();
       const list = claimsRef.current;
+      if (s.mu) {
+        // Em sessão do Multi-User, o que OUTRA pessoa muda também fica "modificado" neste editor (a transação remota
+        // chama Modify()): reservar sozinho tomaria o asset de quem mexeu de verdade. Até o teste com 2 editores, só avisa.
+        if (s.dirty.length) {
+          warn("mu", "warn", "Você está numa sessão do Multi-User: a reserva automática fica desligada (o que os outros mudam também aparece como modificado aqui). Reserve no 🔒 Unreal o que for mexer.");
+        }
+        for (const pkg of s.dirty) {
+          const k = claimKey(pkg);
+          const other = k && list.find((c) => c.uid !== me.uid && c.exp > now && overlaps(c.key, k.key));
+          if (k && other) {
+            warn(`mu|${k.key}|${other.uid}|${other.exp}`, "warn", `${k.path} está modificado no seu Unreal e reservado por ${other.name} até ${hhmm(other.exp)}. Se a mudança foi sua, fale com ${other.name}; se veio de ${other.name} pela sessão, tudo certo.`);
+          }
+        }
+        return;
+      }
       if (s.more > 0) warn("more", "warn", `Há ${s.dirty.length + s.more} assets modificados no Unreal: só ${s.dirty.length} são reservados sozinhos. Reserve a pasta no 🔒 Unreal.`);
       for (const pkg of s.dirty) {
         const k = claimKey(pkg);
