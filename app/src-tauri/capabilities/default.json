@@ -24,6 +24,8 @@
     "allow-unreal-server-start",
     "allow-unreal-server-stop",
     "allow-unreal-status",
+    "allow-vpn-addrs",
+    "allow-git-content",
     "allow-close-guard",
     "allow-app-close"
   ],

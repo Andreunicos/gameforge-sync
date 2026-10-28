@@ -22,7 +22,7 @@ export function RoomsScreen({ user, initialError }: { user: User; initialError: 
     if (!confirm(`Apagar a sala "${r.name}" para TODO MUNDO?
 
 Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
-(A pasta do Claude no seu PC continua lá.)${r.diversion?.repoId ? `\nO repositório ${r.diversion.name} do Diversion também continua: apague lá se quiser.` : ""}`))
+(A pasta do Claude no seu PC continua lá.)${r.diversion?.repoId ? `\nO repositório ${r.diversion.name} do Diversion também continua: apague lá se quiser.` : ""}${r.git?.repo ? `\nO repositório ${r.git.repo} do GitHub também continua: apague lá se quiser.` : ""}`))
       return;
     setDeleting(r.id);
     setError(null);

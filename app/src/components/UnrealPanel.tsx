@@ -3,6 +3,7 @@ import { claimAsset, claimKey, hhmm, releaseAsset, type Claim } from "../claims"
 import { mapName } from "../unreal";
 import type { Author, Presence, Room } from "../types";
 import { DiversionBox } from "./DiversionBox";
+import { GitContentBox } from "./GitContentBox";
 import { Modal } from "./Modals";
 
 const HOURS = [1, 2, 4, 8, 12];
@@ -147,6 +148,8 @@ export function UnrealPanel({
       )}
       {error && <div className="error-box">{error}</div>}
 
+      <GitContentBox room={room} me={me} isOwner={isOwner} readOnly={readOnly} dir={dir} project={project} />
+
       <DiversionBox room={room} meUid={me.uid} isOwner={isOwner} project={project} />
 
       <h4 style={{ marginBottom: 6 }}>Como a sala Unreal funciona</h4>
@@ -157,7 +160,7 @@ export function UnrealPanel({
           {project ? <> Projeto desta sala: <code>{project}/</code>.</> : ""} Todos com a mesma versão da engine.
         </li>
         <li>Sincroniza sozinho (com merge): C++, .cs, .ini, .py, .usf/.ush, .uproject/.uplugin. Não sincroniza: Content/ (só Content/Python), Binaries, Intermediate, Saved, DerivedDataCache.</li>
-        <li>Content/ chega a cada um por fora (Diversion, Perforce, Git LFS ou zip). Mudou .h ou .Build.cs de alguém: feche o editor e recompile.</li>
+        <li>Content/ chega a cada um pelo Git desta sala (acima) ou por fora (Diversion, Perforce, zip). Mudou .h ou .Build.cs de alguém: feche o editor e recompile.</li>
         <li>Editar o mesmo mapa ao vivo: Multi-User Editing da Epic (Beta, só rede local/VPN).</li>
       </ul>
 

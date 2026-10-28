@@ -1,5 +1,6 @@
 import type { Timestamp } from "firebase/firestore";
 import type { DvRoom } from "./diversion";
+import type { GitRoom } from "./gitContent";
 
 export type RoomKind = "html5" | "roblox" | "unreal";
 export type Role = "owner" | "editor" | "viewer";
@@ -19,6 +20,8 @@ export interface Room {
   inviteCode?: string;
   /** Sala Unreal: repositório do Diversion do Content/ (sem segredo; o token fica só no PC do dono). */
   diversion?: DvRoom;
+  /** Sala Unreal: repositório Git privado (GitHub + LFS) do Content/ (sem segredo; o token fica só no PC do dono). */
+  git?: GitRoom;
   createdAt?: Timestamp;
 }
 

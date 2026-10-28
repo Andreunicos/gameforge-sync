@@ -32,6 +32,7 @@ import type { RoomSync } from "../sync/roomSync";
 import type { Author, Presence, Room } from "../types";
 import type { OpenTool } from "./ClaudePanel";
 import { Modal } from "./Modals";
+import { VPN_LABEL, checkHostAddr, hostAddr, joinTarget, netAddrs, pickVpn, saveHosted, type NetAddr } from "../vpn";
 
 const MCP_WAIT_MS = 5 * 60_000; // o editor de um projeto grande leva minutos para abrir
 const onlyName = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
@@ -68,6 +69,8 @@ export function UnrealConnectPanel({
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const waitUntil = useRef(0);
+  // Placas de rede deste PC (Radmin...): null = lendo; "old" = app sem o comando vpn_addrs (só o modo manual).
+  const [nets, setNets] = useState<NetAddr[] | "old" | null>(null);
 
   const set = (patch: Partial<UeSettings>) =>
     setS((cur) => {
@@ -103,6 +106,28 @@ export function UnrealConnectPanel({
       setEngines(list);
       return list;
     }, fail);
+
+  /** Relê as placas de rede (a pessoa pode ligar o Radmin com o painel aberto). Erro nunca trava o painel: cai no manual. */
+  const refreshNets = () =>
+    netAddrs().then(
+      (list) => {
+        setNets(list);
+        return list;
+      },
+      (e) => {
+        if (!isOldApp(e)) console.warn("vpn_addrs:", e);
+        const v = isOldApp(e) ? "old" : [];
+        setNets(v);
+        return v;
+      },
+    );
+
+  useEffect(() => {
+    void refreshNets();
+    const t = window.setInterval(() => void refreshNets(), 5000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Acha o projeto pelos arquivos da sala (raiz ou subpasta até 2 níveis) e lê o .uproject dele no disco. */
   const findProject = async () => {
@@ -168,6 +193,9 @@ export function UnrealConnectPanel({
 
   const engine = engines?.find((e) => e.root === s.root);
   const hosts = people.filter((p) => p.mue && p.uid !== me.uid);
+  const vpn = Array.isArray(nets) ? pickVpn(nets) : undefined;
+  const target = joinTarget(s, people, me.uid);
+  const hostTarget = joinTarget({ ...s, addr: "" }, people, me.uid); // o que o automático usaria
   const pre = proj ? `${proj}/` : "";
   const initPy = sync.remoteFiles().find((f) => f.path.toLowerCase() === `${pre}content/python/init_unreal.py`.toLowerCase());
   const presenceOff = initPy && !initPy.content.includes("gameforge_presence");
@@ -199,6 +227,20 @@ export function UnrealConnectPanel({
       if (u.missing.length) throw new Error(`Faltam plugins no ${u.file}: ${u.missing.join(", ")}. Clique em "Ligar plugins" abaixo.`);
       if (!engine) throw new Error("Unreal não encontrado neste PC. Indique a pasta da engine (ex.: C:\\Program Files\\Epic Games\\UE_5.8).");
       if (s.multi && (!s.server || !s.session)) throw new Error("Preencha o servidor e a sessão do Multi-User (ou desmarque a opção).");
+      // Multi-User automático: campo IP:porta preenchido ganha; senão servidor, sessão e endereço do host da sala (presença).
+      const t = joinTarget(s, people, me.uid);
+      if (s.multi && t.from === "none") {
+        const ok = confirm(
+          "Ninguém está hospedando o Multi-User nesta sala agora: peça para o host abrir o 🔌 Conectar Unreal e clicar em Hospedar.\n\nOK = abrir o Unreal mesmo assim (ele fica procurando o servidor). Cancelar = esperar o host.",
+        );
+        if (!ok) return;
+      }
+      if (s.multi && t.addr) {
+        const list = await refreshNets();
+        const c = Array.isArray(list) ? checkHostAddr(t.addr, list) : null;
+        if (c?.level === "error") throw new Error(c.text);
+        if (c && !confirm(`${c.text}\n\nConectar mesmo assim?`)) return;
+      }
       await writeMcpJson(dir, s.mcpPort);
       const now = await ueStatus(dir, s.mcpPort);
       // O script de presença deu sinal há menos de 30 s: o editor deste projeto já está aberto, não abre outro.
@@ -220,9 +262,12 @@ export function UnrealConnectPanel({
         setMsg(".mcp.json pronto e Claude Code aberto. Se a porta é de outro programa, mude a porta do MCP aqui e no Unreal.");
         return;
       }
-      await openEditor(dir, s, me.name, p);
+      await openEditor(dir, { ...s, server: t.server, session: t.session, addr: t.addr }, me.name, p);
       waitUntil.current = Date.now() + MCP_WAIT_MS;
-      setMsg(`Abrindo o Unreal ${engine.version}${s.multi ? ` e entrando na sessão ${s.session}` : ""}… O Claude Code abre sozinho quando o MCP responder.`);
+      const where = t.hostName ? ` de ${t.hostName}` : t.from === "self" ? " deste PC" : "";
+      setMsg(
+        `Abrindo o Unreal ${engine.version}${s.multi ? ` e entrando na sessão ${t.session}${where}${t.addr ? ` (${t.addr})` : " (rede local)"}` : ""}… O Claude Code abre sozinho quando o MCP responder.`,
+      );
     });
 
   const host = () =>
@@ -230,18 +275,36 @@ export function UnrealConnectPanel({
       if (!dir || !engine) throw new Error("Ligue a pasta da sala e escolha o Unreal primeiro.");
       const { p, u } = await findProject();
       if (typeof p !== "string" || !u) throw new Error("O servidor usa o nome do .uproject: ache o projeto primeiro (veja a linha Projeto acima).");
-      await startServer(dir, s, p);
-      sync.setUnreal({ mue: { server: s.server, session: s.session, addr: s.unicast.trim() } });
+      // Automático: campo vazio + rede virtual ligada = IP da VPN + porta fixa da sala (ocupada: tenta as 9 seguintes).
+      const list = await refreshNets();
+      const v = Array.isArray(list) ? pickVpn(list) : undefined;
+      let addr = hostAddr(s.unicast, v, room.id);
+      for (let i = 1; ; i++) {
+        try {
+          await startServer(dir, { ...s, unicast: addr }, p);
+          break;
+        } catch (e) {
+          if (s.unicast.trim() || !v || i > 9 || !/porta UDP \d+ já está em uso/.test(String(e))) throw e;
+          addr = hostAddr("", v, room.id, i);
+        }
+      }
+      sync.setUnreal({ mue: { server: s.server, session: s.session, addr } });
+      saveHosted(room.id, addr);
       setSt(await ueStatus(dir, s.mcpPort));
-      setMsg("Servidor do Multi-User ligado neste PC. Os outros veem você como host aqui no painel. Ele fecha junto com o app.");
+      setMsg(
+        addr
+          ? `Servidor do Multi-User ligado em ${addr}${v && !s.unicast.trim() ? ` (${VPN_LABEL[v.kind as keyof typeof VPN_LABEL]})` : ""}. Os outros só clicam em Conectar: o endereço vai sozinho. Fecha junto com o app e, se a VPN cair por mais de 10 s, fecha sozinho.`
+          : "Servidor do Multi-User ligado para a REDE LOCAL (nenhuma rede virtual ligada neste PC). Em casas diferentes: abra o Radmin VPN, derrube e hospede de novo.",
+      );
     });
 
   const unhost = () =>
     run(async () => {
       if (!dir) return;
       if (!confirm("Derrubar o servidor do Multi-User? Quem estiver na sessão cai. Antes, alguém deve salvar a sessão (Persist Session Changes no Unreal).")) return;
+      sync.setUnreal({ mue: null }); // antes de parar: o vigia da sala (useMueWatch) não confunde com queda
+      saveHosted(room.id, null);
       await stopServer(dir);
-      sync.setUnreal({ mue: null });
       setSt(await ueStatus(dir, s.mcpPort));
     });
 
@@ -372,13 +435,60 @@ export function UnrealConnectPanel({
         <input type="checkbox" checked={s.multi} onChange={(e) => set({ multi: e.target.checked })} style={{ width: "auto" }} />
         Entrar na sessão ao abrir o Unreal (como <b>{ueName(me.name)}</b>)
       </label>
+      <div className="small" style={{ marginTop: 4 }}>
+        {dot(!!vpn)}
+        {nets === null
+          ? "Procurando rede virtual…"
+          : nets === "old"
+            ? "Esta versão do app não acha o Radmin VPN sozinha: feche e abra o GameForge para atualizar (até lá, IP:porta à mão)."
+            : vpn
+              ? <>Rede virtual: <b>{VPN_LABEL[vpn.kind as keyof typeof VPN_LABEL]}</b> {vpn.ip}</>
+              : "Nenhuma rede virtual ligada: em casas diferentes, abra o Radmin VPN e entre na rede da turma (mesmo Wi-Fi não precisa)."}
+      </div>
+      {s.multi && (
+        <div className="small muted" style={{ marginTop: 2 }}>
+          Conectar vai em:{" "}
+          {target.from === "manual"
+            ? `${target.addr} (digitado à mão)`
+            : target.from === "host"
+              ? `servidor de ${target.hostName}${target.addr ? ` em ${target.addr}` : " (rede local)"} (automático)`
+              : target.from === "self"
+                ? `o servidor deste PC${target.addr ? ` (${target.addr})` : ""}`
+                : "ninguém está hospedando: peça para o host clicar em Hospedar."}
+        </div>
+      )}
+      {s.multi && target.from === "manual" && hostTarget.from === "host" && hostTarget.addr !== target.addr && (
+        <div className="note-box small">
+          O endereço digitado ({target.addr}) é diferente do que {hostTarget.hostName} publicou ({hostTarget.addr || "rede local"}). Apague o campo para seguir o host sozinho.
+        </div>
+      )}
+      {s.multi && snap && !snap.mu && (
+        <details className="note-box small" style={{ marginTop: 6 }}>
+          <summary style={{ cursor: "pointer" }}>O Unreal está aberto, mas o app ainda não o viu entrar na sessão. Não achou o servidor?</summary>
+          <ol className="steps">
+            <li>Os dois com o Radmin VPN ligado e na MESMA rede (o IP dos dois começa com 26.).</li>
+            <li>O host clicou em Hospedar e aparece aqui como host (o servidor dele fecha se o Radmin dele cair).</li>
+            <li>
+              Firewall do Windows: a rede do Radmin costuma ser <b>Pública</b>. Em Segurança do Windows &gt; Firewall e proteção de rede &gt; Permitir um
+              aplicativo pelo firewall, marque <b>Pública</b> para <code>UnrealMultiUserServer</code> (no PC do host) e <code>UnrealEditor</code> (nos dois); se não estiverem
+              na lista, "Permitir outro aplicativo" e escolha em <code>Engine\Binaries\Win64</code> da engine. Se o Windows perguntar ao abrir, marque redes
+              públicas também.
+            </li>
+            <li>Ainda não: feche o Unreal e clique em Conectar de novo (o script de presença antigo também não mostra a sessão: ignore se você já está nela).</li>
+          </ol>
+        </details>
+      )}
       {hosts.map((p) => (
         <div key={p.uid} className="row small" style={{ marginTop: 6 }}>
           <span className="grow">
             <b>{p.name}</b> hospeda: servidor {p.mue!.server}, sessão {p.mue!.session}
             {p.mue!.addr ? `, endereço ${p.mue!.addr}` : " (rede local)"}
           </span>
-          <button className="small" onClick={() => set({ multi: true, server: p.mue!.server, session: p.mue!.session, addr: p.mue!.addr })}>
+          <button
+            className="small"
+            title="Usa o servidor e a sessão desse host; o endereço segue o host sozinho"
+            onClick={() => set({ multi: true, server: p.mue!.server, session: p.mue!.session, addr: "" })}
+          >
             Usar
           </button>
         </div>
@@ -388,8 +498,8 @@ export function UnrealConnectPanel({
           <input title="Nome do servidor (o mesmo do host)" placeholder="servidor" value={s.server} onChange={(e) => set({ server: onlyName(e.target.value) })} style={{ flex: "1 1 120px" }} />
           <input title="Nome da sessão (o mesmo do host)" placeholder="sessão" value={s.session} onChange={(e) => set({ session: onlyName(e.target.value) })} style={{ flex: "1 1 120px" }} />
           <input
-            title="Só se o host estiver em outra rede (VPN): IP:porta do servidor. Vazio = rede local."
-            placeholder="IP:porta do host (só VPN)"
+            title="Vazio = automático (o endereço que o host publicou, ou rede local). Preenchido = usa este IP:porta."
+            placeholder="IP:porta do host (vazio = automático)"
             value={s.addr}
             onChange={(e) => set({ addr: e.target.value.trim() })}
             style={{ flex: "1 1 160px" }}
@@ -401,18 +511,19 @@ export function UnrealConnectPanel({
           Hospedar a sessão neste PC {st?.server ? "(servidor ligado)" : ""}
         </summary>
         <p className="small muted" style={{ lineHeight: 1.55 }}>
-          Um PC da turma liga o servidor (não precisa do projeto, mas tem que ficar com o app aberto). Mesma rede: deixe o endereço vazio. Em VPN
-          (Tailscale e parecidas): o IP deste PC na VPN e uma porta fixa entre 50000 e 60000, e os outros põem esse mesmo IP:porta.
+          Um PC da turma liga o servidor (tem que ficar com o app aberto). Deixe o endereço vazio: com o Radmin VPN (ou ZeroTier/Tailscale) ligado, o
+          app usa o IP deste PC na VPN e uma porta fixa da sala ({hostAddr("", vpn, room.id) || "sem VPN: rede local"}) e os outros recebem sozinhos.
+          Se a VPN deste PC cair por mais de 10 s, o servidor fecha sozinho (a sessão para para todos; o Unreal de cada um continua aberto).
         </p>
         <div className="row" style={{ flexWrap: "wrap" }}>
-          <input placeholder="IP:porta deste PC na VPN (vazio = rede local)" value={s.unicast} onChange={(e) => set({ unicast: e.target.value.trim() })} style={{ flex: "1 1 200px" }} />
+          <input placeholder="IP:porta deste PC (vazio = automático)" value={s.unicast} onChange={(e) => set({ unicast: e.target.value.trim() })} style={{ flex: "1 1 200px" }} />
           {st?.server ? (
             <button disabled={busy} onClick={() => void unhost()}>
               Derrubar servidor
             </button>
           ) : (
             <button disabled={busy || !dir || !engine || !s.server || !s.session} onClick={() => void host()}>
-              Ligar servidor
+              Hospedar
             </button>
           )}
         </div>
@@ -476,8 +587,10 @@ export function UnrealConnectPanel({
             <b>▶ Conectar Unreal</b>. Na primeira vez o Claude Code pergunta se pode usar o servidor <code>unreal-mcp</code> do <code>.mcp.json</code>: aceite.
           </li>
           <li>
-            Multi-User: uma pessoa liga o servidor (Hospedar), as outras clicam em <b>Usar</b> e conectam. Mesma rede local, ou VPN com IP:porta. Ao terminar,
-            alguém salva a sessão no Unreal (Persist Session Changes) antes de derrubar o servidor.
+            Multi-User em casas diferentes: todos com o <b>Radmin VPN</b> ligado na mesma rede. Uma pessoa abre "Hospedar a sessão neste PC" e clica em{" "}
+            <b>Hospedar</b>; as outras marcam a caixa do Multi-User e clicam em <b>▶ Conectar Unreal</b> (o endereço vai sozinho, sem digitar). Fechar o Radmin
+            do host (ou o app) desliga o servidor. Não achou o servidor: veja a dica do firewall que aparece acima. Ao terminar, alguém salva a sessão no
+            Unreal (Persist Session Changes) antes de derrubar o servidor.
           </li>
           <li>
             O que cada pessoa seleciona e modifica no editor aparece no 🔒 Unreal e no <code>.gfs/ASSETS.md</code> do Claude; o modificado é reservado

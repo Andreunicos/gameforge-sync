@@ -32,6 +32,8 @@ import { BUGS_FILE, cleanBugImgs } from "../bugimgs";
 import { buildState, onBuild } from "../builds";
 import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../history";
 import { onAppClose } from "../closeGuard";
+import { loadHosted, useMueWatch } from "../vpn";
+import { useGitContent } from "../gitContentSync";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
   const [room, setRoom] = useState<Room | null | undefined>(undefined);
@@ -239,6 +241,8 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   const ueSnap = useUnrealLive(room.id, sync, authorOf(user), isUnreal ? mirrorDir : undefined, claims.list, state.people);
   // Pasta do projeto Unreal (a do .uproject: "" = raiz da sala, ou uma subpasta; null/undefined = nenhum/vários sem escolha).
   const ueProject = useMemo(() => (isUnreal ? roomProject(room.id, state.files.map((f) => f.path)) : null), [isUnreal, room.id, state.files]);
+  // Content/ pelo Git (sala com repositório): confere a cada 10 min e baixa sozinho quando é seguro.
+  useGitContent(room, isUnreal ? mirrorDir : undefined, ueProject, authorOf(user), (text) => sync.onToast({ kind: "info", text }));
   const md = useMemo(
     () => (isUnreal ? assetsMd(claims.list, user.uid, claims.now, selectionMd(state.people, user.uid), ueProject || "") : ""),
     [isUnreal, claims.list, claims.now, user.uid, state.people, ueProject],
@@ -248,10 +252,12 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     if (!isUnreal || !mirrorDir) return;
     const s = loadSettings(room.id, roomSlug(room.name));
     ueStatus(mirrorDir, s.mcpPort).then(
-      (st) => st.server && sync.setUnreal({ mue: { server: s.server, session: s.session, addr: s.unicast.trim() } }),
+      (st) => st.server && sync.setUnreal({ mue: { server: s.server, session: s.session, addr: loadHosted(room.id) ?? s.unicast.trim() } }),
       () => {}, // app antigo, sem o comando
     );
   }, [isUnreal, mirrorDir, sync, room.id, room.name]);
+  // Multi-User: servidor deste PC parou (VPN caiu, fechou sozinho) → tira o host da presença e avisa; convidado avisa se a VPN cair.
+  useMueWatch(room.id, sync, isUnreal ? mirrorDir : undefined, state.people.find((p) => p.uid === user.uid)?.mue, !!ueSnap?.mu);
   useEffect(() => {
     if (md && mirrorDir) void writeAssetsMd(mirrorDir, md).catch((e) => console.warn("ASSETS.md:", e));
   }, [md, mirrorDir]);

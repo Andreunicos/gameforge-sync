@@ -4,11 +4,11 @@
 //! UdpMessagingModule.cpp, ModelContextProtocolSettings.cpp).
 
 use std::collections::HashMap;
-use std::net::{SocketAddr, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Manager, State};
 
 use crate::launch::check_room_dir;
@@ -136,7 +136,7 @@ fn projects(room: &Path) -> Vec<String> {
 /// O projeto da sala: (pasta do projeto, .uproject). `want` = a pasta que a tela escolheu (relativa à sala, "" = raiz): só
 /// vale se for uma das que a busca achou (assim `..`, caminho absoluto ou link para fora nunca passam). Sem `want` (tela
 /// antiga): a da raiz, senão a única.
-fn project(room: &Path, want: Option<&str>) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn project(room: &Path, want: Option<&str>) -> Result<(PathBuf, PathBuf), String> {
     let found = projects(room);
     let rel = match want {
         Some(w) => {
@@ -275,8 +275,44 @@ fn server_start(app: &tauri::AppHandle, dir: String, root: &str, server: &str, s
         let _ = child.wait();
         return Ok(());
     }
-    map.insert(dir, child);
+    let pid = child.id();
+    map.insert(dir.clone(), child);
+    drop(map);
+    // Servidor numa rede virtual (Radmin...): se o IP dela sumir (VPN desligada), o servidor fecha junto.
+    if let Some(ip) = unicast.rsplit_once(':').and_then(|(h, _)| h.parse::<Ipv4Addr>().ok()).filter(|ip| crate::vpn::is_vpn_ip(*ip)) {
+        let app = app.clone();
+        std::thread::spawn(move || watch_vpn(&app, &dir, pid, ip));
+    }
     Ok(())
+}
+
+const VPN_POLL: Duration = Duration::from_secs(3);
+/// IP da VPN fora por este tempo seguido = VPN desligada (menos que isso é oscilação: não derruba).
+const VPN_GRACE: Duration = Duration::from_secs(10);
+
+/// Enquanto o servidor `pid` desta sala roda, olha a placa da VPN; sumiu por VPN_GRACE, encerra só esse processo.
+/// A tela vê o servidor desligado (unreal_status), tira o `mue` da presença e avisa.
+fn watch_vpn(app: &tauri::AppHandle, dir: &str, pid: u32, ip: Ipv4Addr) {
+    let state = app.state::<UnrealState>();
+    let mut since = None;
+    loop {
+        std::thread::sleep(VPN_POLL);
+        let (s, gone) = crate::vpn::lost(since, crate::vpn::has_ip(ip), Instant::now(), VPN_GRACE);
+        since = s;
+        let Ok(mut map) = state.0.lock() else { return };
+        // Derrubado, fechado ou trocado por outro: este vigia acabou.
+        let Some(child) = map.get_mut(dir).filter(|c| c.id() == pid) else { return };
+        if !matches!(child.try_wait(), Ok(None)) {
+            return;
+        }
+        if gone {
+            if let Some(mut child) = map.remove(dir) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            return;
+        }
+    }
 }
 
 /// Derruba o servidor do Multi-User que este app abriu para esta sala (pelo processo, nunca pelo nome).
