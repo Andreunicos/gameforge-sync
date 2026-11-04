@@ -162,6 +162,8 @@ code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-si
 /* Tamanho do celular é calculado no PreviewPane (cabe no palco e mantém a proporção). */
 .preview-stage.phone iframe, .preview-stage.landscape iframe { border-radius: 22px; box-shadow: 0 0 0 6px #2a2236, 0 10px 40px #000a; }
 .preview-stage.full { background: #000; position: relative; }
+.preview-stage.pc { position: relative; }
+.preview-stage.pc iframe { box-shadow: 0 0 0 4px #2a2236, 0 10px 40px #000a; }
 .exit-full { position: absolute; top: 12px; right: 12px; z-index: 2; opacity: 0.35; background: #000a; border-color: #fff3; color: #fff; font-size: 12px; }
 .exit-full:hover { opacity: 1; }
 .console { max-height: 30%; overflow: auto; border-top: 1px solid var(--line); font: 12px/1.45 "JetBrains Mono", Consolas, monospace; background: #0d0b12; }
@@ -404,3 +406,11 @@ button.small { font-size: 12px; padding: 4px 10px; }
 .build-history { margin-top: 14px; }
 .build-old { padding: 4px 0; border-bottom: 1px solid var(--line); }
 button.building { border-color: var(--warn); color: var(--warn); }
+
+/* pastas visuais da lista de salas */
+.room-folder { display: flex; flex-direction: column; gap: 8px; }
+.folder-head { display: flex; gap: 6px; align-items: center; }
+.folder-toggle { text-align: left; font-weight: 600; }
+.folder-body { margin-left: 14px; padding-left: 10px; border-left: 2px solid var(--line); }
+.room-folder-pick { flex: none; max-width: 130px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+.center-screen .room-folder-pick { font-size: 16px; }

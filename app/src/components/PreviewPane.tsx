@@ -3,7 +3,11 @@ import { CONSOLE_MAX, buildPreview, consoleMd, findEntry, type ConsoleError } fr
 import type { RoomSync } from "../sync/roomSync";
 import type { Room } from "../types";
 
-type Device = "free" | "phone" | "landscape";
+type Device = "free" | "phone" | "landscape" | "pc";
+
+/** Tamanho que o jogo enxerga no modo PC (a moldura é reduzida por transform, sem mudar o que o jogo mede). */
+const PC_W = 1920;
+const PC_H = 1080;
 
 /** Proporção de um celular moderno (altura ÷ largura em pé). */
 const PHONE_RATIO = 19.5 / 9;
@@ -11,7 +15,7 @@ const FRAME_GAP = 28; // espaço em volta da moldura do celular
 
 /** Maior tamanho de celular que cabe no palco, mantendo a proporção. */
 function phoneSize(device: Device, w: number, h: number) {
-  if (device === "free") return null;
+  if (device === "free" || device === "pc") return null;
   const ratio = device === "phone" ? 1 / PHONE_RATIO : PHONE_RATIO; // largura ÷ altura
   const aw = Math.max(0, w - FRAME_GAP * 2);
   const ah = Math.max(0, h - FRAME_GAP * 2);
@@ -35,6 +39,25 @@ export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: R
   const stageRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState({ w: 0, h: 0 });
   const [full, setFull] = useState(false);
+  const [muted, setMuted] = useState(() => {
+    try {
+      return localStorage.getItem("gfs-muted") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    try {
+      localStorage.setItem("gfs-muted", next ? "1" : "0");
+    } catch {
+      /* sem storage: vale só nesta sessão */
+    }
+    frame.current?.contentWindow?.postMessage({ __gfsMute: next }, "*");
+  };
 
   // Mede o palco sempre que ele muda de tamanho (janela, tela cheia, esconder console…).
   useLayoutEffect(() => {
@@ -56,6 +79,20 @@ export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: R
     else void stageRef.current?.requestFullscreen().catch(() => {});
   };
   const size = phoneSize(device, stage.w, stage.h);
+  // Modo PC: o iframe mede 1920×1080 de verdade e é encolhido para caber no palco (nunca ampliado).
+  const pcScale = Math.max(0.05, Math.min(1, (stage.w - (full ? 0 : FRAME_GAP * 2)) / PC_W, (stage.h - (full ? 0 : FRAME_GAP * 2)) / PC_H));
+  const pcStyle =
+    device === "pc"
+      ? ({
+          position: "absolute",
+          width: PC_W,
+          height: PC_H,
+          transform: `scale(${pcScale})`,
+          transformOrigin: "0 0",
+          left: (stage.w - PC_W * pcScale) / 2,
+          top: (stage.h - PC_H * pcScale) / 2,
+        } as const)
+      : undefined;
   const st = useSyncExternalStore(
     (l) => sync.subscribe(l),
     () => sync.state,
@@ -130,6 +167,7 @@ export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: R
       assetsBase: room.assetsBase,
       entry,
       storage: storage.current,
+      muted: mutedRef.current,
     });
     setLogs(warnings.map((text) => ({ level: "warn", text })));
     errs.current.clear();
@@ -193,6 +231,9 @@ export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: R
         <label className="row small muted" title="Recarregar sozinho quando alguém mexer no código">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto
         </label>
+        <button className="ghost icon" onClick={toggleMute} title={muted ? "Som do jogo desligado: clique para ligar" : "Desligar o som do jogo (só aqui no preview)"}>
+          {muted ? "🔇" : "🔊"}
+        </button>
         <span className="grow" />
         {entry && entry !== home && <span className="small muted ellipsis" title="Página em que o jogo está agora">▸ {entry}</span>}
         {pages.length > 1 && (
@@ -217,6 +258,7 @@ export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: R
           <option value="free">Tela livre</option>
           <option value="phone">Celular em pé</option>
           <option value="landscape">Celular deitado</option>
+          <option value="pc">PC 1920×1080</option>
         </select>
         <button className="ghost icon" onClick={toggleFull} title="Tela cheia (Esc para sair)">
           ⛶
@@ -234,7 +276,7 @@ export function PreviewPane({ sync, room, onConsole }: { sync: RoomSync; room: R
         )}
         <iframe
           ref={frame}
-          style={size ? { width: size.width, height: size.height } : undefined}
+          style={size ? { width: size.width, height: size.height } : pcStyle}
           title="Preview do jogo"
           sandbox="allow-scripts allow-pointer-lock allow-popups allow-forms allow-modals"
           allow="autoplay; fullscreen; gamepad"

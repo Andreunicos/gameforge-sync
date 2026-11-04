@@ -20,6 +20,8 @@ export interface PreviewInput {
   storage?: Record<string, string>;
   /** Build "Web .html": um arquivo só que roda sozinho (sem o console/localStorage do preview). */
   standalone?: boolean;
+  /** Preview começa mudo (o botão 🔇 da barra; muda depois por postMessage `{__gfsMute}`). */
+  muted?: boolean;
 }
 
 export function findEntry(paths: string[]): string | null {
@@ -48,8 +50,8 @@ export function resolvePath(from: string, spec: string): string | null {
 const FAKE_ROOT = "https://sala.gameforge.invalid/";
 
 /** Roda antes do jogo: console → app, localStorage único da sala, navegação entre páginas → app. */
-function shim(storage: Record<string, string>, root: string) {
-  return `(function(S,ROOT){
+export function shim(storage: Record<string, string>, root: string, muted: boolean) {
+  return `(function(S,ROOT,MUTE){
 var post=function(m){m.__gfs=1;try{parent.postMessage(m,'*')}catch(e){}};
 var P=function(level,args){post({level:level,text:Array.prototype.map.call(args,function(a){try{return a instanceof Error?(a.stack||a.message):(typeof a==='object'?JSON.stringify(a):String(a))}catch(e){return String(a)}}).join(' ')})};
 ['log','info','warn','error'].forEach(function(l){var o=console[l];console[l]=function(){P(l,arguments);return o.apply(console,arguments)}});
@@ -62,7 +64,14 @@ function go(u){var p=page(u);if(p)post({nav:p});else location.href=u}
 window.__gfsLoc={get href(){return location.href},set href(u){go(String(u))},assign:function(u){go(String(u))},replace:function(u){go(String(u))}};
 document.addEventListener('click',function(e){var a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||(a.target&&a.target!=='_self'))return;var p=page(a.href);if(p){e.preventDefault();post({nav:p})}},true);
 if(window.navigation)navigation.addEventListener('navigate',function(e){if(e.hashChange||e.navigationType==='reload'||e.navigationType==='traverse')return;var p=page(e.destination.url);if(p&&e.cancelable){e.preventDefault();post({nav:p})}});
-})(${JSON.stringify(storage).replace(/</g, "\u003c")},${JSON.stringify(root)});`;
+var mu=!!MUTE,gains=[],els=[];
+function media(){var l=els.slice();try{Array.prototype.forEach.call(document.querySelectorAll('audio,video'),function(e){if(l.indexOf(e)<0)l.push(e)})}catch(e){}return l}
+function setMute(v){mu=!!v;gains.forEach(function(g){g.gain.value=mu?0:1});media().forEach(function(e){if(mu){if(e.__gm===undefined)e.__gm=e.muted;e.muted=true}else if(e.__gm!==undefined){e.muted=e.__gm;e.__gm=undefined}})}
+addEventListener('message',function(e){if(e.source===parent&&e.data&&typeof e.data.__gfsMute==='boolean')setMute(e.data.__gfsMute)});
+['AudioContext','webkitAudioContext'].forEach(function(n){var C=window[n];if(!C||(n[0]==='w'&&C===window.AudioContext))return;var d=Object.getOwnPropertyDescriptor(C.prototype,'destination');if(!d||!d.get)return;var W=new WeakMap();Object.defineProperty(C.prototype,'destination',{configurable:true,get:function(){var g=W.get(this);if(!g){g=this.createGain();g.gain.value=mu?0:1;g.connect(d.get.call(this));W.set(this,g);gains.push(g)}return g}})});
+var play=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(){if(els.indexOf(this)<0)els.push(this);if(mu){if(this.__gm===undefined)this.__gm=this.muted;this.muted=true}return play.apply(this,arguments)};
+if(mu)addEventListener('DOMContentLoaded',function(){setMute(true)});
+})(${JSON.stringify(storage).replace(/</g, "\u003c")},${JSON.stringify(root)},${muted ? "true" : "false"});`;
 }
 
 // O iframe não tem origem própria, então o navegador não avisa quando o jogo troca de página.
@@ -170,7 +179,7 @@ export function buildPreview(input: PreviewInput): { html: string; warnings: str
   base.href = root + dirOf(entry);
   head.prepend(base);
   const pre = doc.createElement("script");
-  pre.textContent = shim(input.storage ?? {}, root);
+  pre.textContent = shim(input.storage ?? {}, root, !!input.muted);
   head.prepend(pre);
 
   return { html: "<!doctype html>\n" + doc.documentElement.outerHTML, warnings };
