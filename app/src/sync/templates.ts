@@ -268,6 +268,131 @@ export function ueScripts(project: string): [path: string, text: string][] {
 export const ueProjectRule = (project: string) =>
   `## Pasta do projeto\n- O projeto Unreal desta sala está em ${project}/ (o .uproject, Source/, Config/ e Content/ ficam lá). Content/..., Source/... e Config/... destas regras e do .gfs/ASSETS.md = ${project}/Content/..., ${project}/Source/..., ${project}/Config/...\n`;
 
+// ── Salas Godot 4.x ──────────────────────────────────────────────────────────
+// O projeto (a pasta do project.godot = res://) fica na raiz da sala ou numa subpasta: texto sincroniza com merge por linha;
+// imagens/sons (binário) chegam por Git/zip. Cenas são texto frágil: reservas por cena (claims) e regras de edição mínima.
+
+export const GODOT_VERSION = "4.7";
+
+// Regras Godot (o CLAUDE.md da sala Godot e o bloco que "Converter para Godot" acrescenta ao CLAUDE.md de uma sala HTML5).
+export const GODOT_RULES = `## Godot pela linha de comando
+- A pasta do projeto é a do project.godot (esta ou uma subpasta): res:// = essa pasta. Versão: config/features do project.godot (todos iguais).
+- Executável: o que o app achou (🎮 Godot → Verificar mostra o caminho) ou $GODOT_BIN.
+- Mudou imagem, som ou criou recurso/cena: rode \`godot --headless --path <projeto> --import\` antes de rodar ou exportar.
+- Conferir erros sem janela: \`godot --headless --path <projeto> --quit-after 60\` (erros de script/cena saem no terminal).
+- Ver a tela: peça à pessoa 🎮 Godot → Capturar tela; o PNG vai para .gfs/frames/ (abra com Read). Saída do jogo aberto pelo app: .gfs/godot-run.log; do export Web: .gfs/godot-export.log.
+- Arquivos em UTF-8 SEM BOM (com BOM o projeto não carrega). No PowerShell 5.1 não use Set-Content -Encoding utf8.
+
+## Cenas (.tscn/.tres): edite o mínimo
+- Cada [ext_resource]/[sub_resource] tem id único no arquivo: nunca repita, renumere ou reordene seções.
+- Não mexa em load_steps no cabeçalho [gd_scene ...] (é só dica de progresso; duas pessoas mudando = conflito na 1ª linha).
+- Mude só as linhas necessárias: o merge é por linha, reescrever a cena inteira = conflito com quem mexer junto.
+- Prefira lógica em script .gd (@export, código no _ready) a editar .tscn à mão. Nó novo: no fim do arquivo, com o parent certo.
+- Uma pessoa por cena: antes de mexer em .tscn/.tres leia .gfs/CENAS.md. Reservada por outro = não toque. Sem reserva: peça à sua pessoa para reservar (🎮 Godot → Reservas).
+- O .uid ao lado do script (player.gd.uid) vai junto com ele: não apague nem edite.
+- Achou <<<<<<< ======= >>>>>>>: é conflito e a Godot NÃO abre o arquivo assim. Junte as duas versões, apague os marcadores e confira os ids.
+- Nunca edite .godot/, arquivos .import nem builds/ (gerados pela Godot e pelo app).
+`;
+
+export const ROOM_CLAUDE_MD_GODOT = `# Sala do GameForge Sync (Godot 4.x) — regras para o Claude
+
+Esta pasta tem um projeto Godot compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
+Com o app GameForge Sync aberto, o TEXTO sincroniza sozinho em segundos (.gd, .tscn, .tres, .gdshader, project.godot,
+export_presets.cfg, .uid, .json, .md...). NÃO sincronizam por aqui: imagens, sons, fontes, modelos, .import, .godot/ e builds/ (chegam por Git/zip).
+
+${MODELOS_RULE}
+${BUGS_SECTION}
+${GODOT_RULES}
+## Como trabalhar
+- Mexa só no necessário; consulte .gfs/MAPA.md (nome@linha) e leia só aquelas linhas.
+- Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
+
+## Nunca
+- Desfazer ou reescrever código de outra pessoa sem perguntar.
+- Apagar arquivos (peça ao dono da sala).
+- Mexer em arquivos fora do que foi pedido.
+
+## Saber mais
+- Visão do jogo e decisões: GAME.md (leia só quando a tarefa depender de design).
+`;
+
+export const ROOM_GAME_MD_GODOT = `# GAME.md — visão do jogo (Godot 4.x)
+
+> Árbitro das decisões de design: em dúvida, siga o que está aqui. Mantenha curto.
+
+## O jogo
+- Gênero:
+- Plataforma: (PC / Web / celular)
+- Ideia em 1 frase:
+
+## Projeto
+- Versão da Godot (todos iguais): ${GODOT_VERSION}
+- Renderizador: gl_compatibility (igual na Web e no .exe)
+- Cenas principais e quem cuida de cada uma:
+- Como imagens e sons chegam a cada pessoa: (Git / zip)
+
+## Decisões já tomadas
+-
+`;
+
+/** Projeto Godot mínimo que roda e exporta para Web (pasta `dir` relativa à sala, "" = raiz). */
+export function godotProjectTemplates(name: string, dir = ""): [path: string, text: string][] {
+  const pre = dir ? `${dir}/` : "";
+  return [
+    [
+      `${pre}project.godot`,
+      `; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name=${JSON.stringify(name)}
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("${GODOT_VERSION}", "GL Compatibility")
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+`,
+    ],
+    [
+      `${pre}scenes/main.tscn`,
+      `[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Label" type="Label" parent="."]
+offset_left = 40.0
+offset_top = 40.0
+text = "GameForge + Godot"
+`,
+    ],
+    [`${pre}scripts/main.gd`, `extends Node2D\n\n\nfunc _ready() -> void:\n\tprint("Main pronto")\n`],
+    [
+      `${pre}export_presets.cfg`,
+      `[preset.0]
+
+name="Web"
+platform="Web"
+runnable=true
+export_filter="all_resources"
+include_filter=""
+exclude_filter=""
+export_path=""
+
+[preset.0.options]
+
+variant/extensions_support=false
+variant/thread_support=false
+`,
+    ],
+  ];
+}
+
 /** Nome de pasta seguro para um local: sem acento, espaço ou símbolo (vira o nome do projeto Rojo). */
 export function placeFolder(name: string): string {
   return name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9_-]+/g, "") || "Local";
@@ -315,6 +440,14 @@ export function roomTemplates(kind: string | undefined, roomName: string): [path
       ["CLAUDE.md", ROOM_CLAUDE_MD_UNREAL],
       ["GAME.md", ROOM_GAME_MD_UNREAL],
       ["MODELOS.md", ROOM_MODELOS_MD],
+    ];
+  }
+  if (kind === "godot") {
+    return [
+      ["CLAUDE.md", ROOM_CLAUDE_MD_GODOT],
+      ["GAME.md", ROOM_GAME_MD_GODOT],
+      ["MODELOS.md", ROOM_MODELOS_MD],
+      ...godotProjectTemplates(roomName),
     ];
   }
   return [

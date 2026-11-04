@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { RoomSync, RoomSyncState } from "../sync/roomSync";
-import { IGNORE_PATH, SECRET_PATH, isCodePath } from "../sync/fileKinds";
+import { IGNORE_PATH, SECRET_PATH, hasSecretContent, isCodePath } from "../sync/fileKinds";
 
 function extClass(path: string) {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -79,7 +79,7 @@ export function FileList({
           path: f.webkitRelativePath.split("/").slice(1).join("/"),
           content: (await f.text()).replace(/\r\n/g, "\n"),
         })),
-      );
+      ).then((all) => all.filter((d) => !hasSecretContent(d.path, d.content)));
       const skipped = await sync.importFiles(data, (n) => setImporting(`${n}/${files.length}`));
       if (skipped.length) toast(`Ficaram de fora (maiores que 7 MB): ${skipped.join(", ")}`, "warn");
       else toast(`${data.length} arquivo(s) importados.`, "info");

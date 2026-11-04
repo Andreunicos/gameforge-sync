@@ -13,7 +13,10 @@ const EXT = new Set(
     // dados e config
     "json jsonc json5 yaml yml toml ini cfg conf properties xml csv tsv sql graphql gql proto cmake plist " +
     // texto, shaders, jogos
-    "md rst txt svg glsl frag vert wgsl hlsl usf ush gd tscn tres uproject uplugin"
+    "md rst txt svg glsl frag vert wgsl hlsl usf ush uproject uplugin " +
+    // Godot (texto): project.godot, cenas/recursos, shaders, traduções .po, e o .uid (4.4+) que o script/shader leva junto:
+    // sem ele cada PC gera outro uid:// e as cenas que apontam para o script mudam à toa (.import e .translation ficam fora).
+    "godot gd tscn tres gdshader gdshaderinc gdextension uid po pot"
   ).split(" "),
 );
 
@@ -30,7 +33,7 @@ const NOISE =
 
 /** Pastas que não sobem: gerenciadas por ferramentas, saídas de build, ou da própria sala. */
 export const IGNORE_PATH =
-  /(^|\/)(\.gfs|\.git|\.claude|\.vscode|\.idea|node_modules|dist|android|ios|builds|Packages|ServerPackages|__pycache__|\.venv|venv|\.next|\.nuxt|\.cache|\.gradle|\.pytest_cache|\.mypy_cache|\.tox)(\/|$)|^(target|build|out|obj|coverage|Pods|DerivedData)\//;
+  /(^|\/)(\.gfs|\.git|\.godot|\.import|\.claude|\.vscode|\.idea|node_modules|dist|android|ios|builds|Packages|ServerPackages|__pycache__|\.venv|venv|\.next|\.nuxt|\.cache|\.gradle|\.pytest_cache|\.mypy_cache|\.tox)(\/|$)|^(target|build|out|obj|coverage|Pods|DerivedData)\//;
 
 /** Só em sala Unreal (outros tipos podem ter Build/ ou Content/ de verdade, ex.: Unity WebGL): pastas geradas ou binárias
  * em qualquer nível (Plugins/X/Binaries também). Content/ é .uasset/.umap, menos Content/Python (scripts do editor). */
@@ -39,6 +42,19 @@ export const UNREAL_IGNORE_PATH = /(^|\/)(Binaries|Intermediate|Saved|DerivedDat
 /** Pastas onde o projeto Unreal (.uproject) nunca está: a busca (raiz e subpastas até 2 níveis) não entra nelas nem nas que
  * começam com ponto. Igual ao SKIP de app/src-tauri/src/unreal.rs. */
 export const UE_PROJECT_SKIP = /^(node_modules|intermediate|saved|deriveddatacache|binaries|builds|content|build)$/i;
+
+/** Só em sala Godot: cache do editor (.godot/, .import/ da 3.x), saídas de export em qualquer nível (um export Web solto
+ * traria o index.js da engine) e as credenciais de export. Igual ao SKIP de app/src-tauri/src/godot.rs para a busca. */
+export const GODOT_IGNORE_PATH = /(^|\/)(\.godot|\.import|\.mono|builds?|exports?)(\/|$)|(^|\/)export_credentials\.cfg$/i;
+
+/** Pastas onde o project.godot nunca está (a busca, raiz e subpastas até 2 níveis, não entra nelas nem nas com ponto). */
+export const GODOT_PROJECT_SKIP = /^(node_modules|builds?|exports?|addons)$/i;
+
+/** Conteúdo com segredo num arquivo que a sala aceitaria: export_presets.cfg com senha/chave preenchida (Godot 4.1+ guarda
+ * isso em .godot/export_credentials.cfg, mas projeto antigo ou editado à mão pode ter). Esse arquivo não sobe. */
+export function hasSecretContent(rel: string, text: string): boolean {
+  return /(^|\/)export_presets\.cfg$/i.test(rel) && /^[^=\n]*(password|encryption_key)[^=\n]*=\s*"[^"\n]+"/im.test(text);
+}
 
 /** O arquivo é texto de código/script que a sala aceita? (`rel` = caminho relativo à pasta do projeto) */
 export function isCodePath(rel: string): boolean {

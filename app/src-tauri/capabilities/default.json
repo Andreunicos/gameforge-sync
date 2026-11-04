@@ -27,7 +27,15 @@
     "allow-vpn-addrs",
     "allow-git-content",
     "allow-close-guard",
-    "allow-app-close"
+    "allow-app-close",
+    "allow-godot-info",
+    "allow-godot-import",
+    "allow-godot-run",
+    "allow-godot-stop",
+    "allow-godot-status",
+    "allow-godot-export-web",
+    "allow-godot-serve",
+    "allow-godot-capture"
   ],
   "remote": {
     "urls": [

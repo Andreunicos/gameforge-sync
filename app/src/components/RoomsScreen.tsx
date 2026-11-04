@@ -198,6 +198,7 @@ Somem os arquivos de código, a atividade e o convite. Não dá para desfazer.
             <option value="html5">HTML5</option>
             <option value="roblox">Roblox (Rojo)</option>
             <option value="unreal">Unreal 5.8</option>
+            <option value="godot">Godot 4.x</option>
           </select>
           <input placeholder="Nome do jogo (ex.: Capivaras TD)" value={name} onChange={(e) => setName(e.target.value)} />
           <button className="primary" disabled={busy || !name.trim()}>

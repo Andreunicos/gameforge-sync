@@ -159,7 +159,7 @@ export async function deleteRoom(room: Room, onProgress?: (n: number) => void) {
   countWrite();
 }
 
-export async function updateRoomSettings(roomId: string, data: Partial<Pick<Room, "name" | "assetsBase" | "minAppVersion" | "diversion" | "git">>) {
+export async function updateRoomSettings(roomId: string, data: Partial<Pick<Room, "name" | "assetsBase" | "minAppVersion" | "diversion" | "git" | "kind" | "godotVersion">>) {
   await updateDoc(doc(db, "rooms", roomId), data);
   countWrite();
 }

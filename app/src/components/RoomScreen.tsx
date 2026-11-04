@@ -24,6 +24,8 @@ import { BugsPanel } from "./BugsPanel";
 import { RojoPanel } from "./RojoPanel";
 import { UnrealPanel } from "./UnrealPanel";
 import { UnrealConnectPanel } from "./UnrealConnectPanel";
+import { GodotPanel } from "./GodotPanel";
+import { convertToGodot, scenesMd, writeScenesMd } from "../godot";
 import { useRojo } from "../rojo";
 import { assetsMd, hhmm, useClaims, writeAssetsMd } from "../claims";
 import { loadSettings, roomProject, selectionMd, ueStatus, useUnrealLive } from "../unreal";
@@ -105,14 +107,16 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     () => sync.state,
   );
   const [toasts, setToasts] = useState<(Toast & { id: number })[]>([]);
-  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | "unreal" | "ue" | null>(null);
+  const [modal, setModal] = useState<"invite" | "settings" | "claude" | "history" | "build" | "bugs" | "rojo" | "unreal" | "ue" | "godot" | null>(null);
   const build = useSyncExternalStore(onBuild, () => buildState(room.id));
   const building = build.phase === "enviando" || build.phase === "compilando" || build.phase === "baixando";
   const isRoblox = room.kind === "roblox";
   const isUnreal = room.kind === "unreal";
-  const isHtml5 = !isRoblox && !isUnreal; // kind ausente = html5 (salas antigas)
+  const isGodot = room.kind === "godot";
+  // kind ausente = html5 (salas antigas). Tipo desconhecido (app antigo vendo sala nova) também cai aqui.
+  const isHtml5 = !isRoblox && !isUnreal && !isGodot;
   const [showPreview, setShowPreview] = useState(isHtml5);
-  const claims = useClaims(room.id, isUnreal);
+  const claims = useClaims(room.id, isUnreal || isGodot); // Godot: reservas de cena (res://...)
   const rojo = useRojo(sync, isRoblox && isTauri());
   // Sala de Roblox em PC sem Rojo: abre o painel com o botão de instalar (uma vez).
   const askedRojo = useRef(false);
@@ -261,6 +265,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   useEffect(() => {
     if (md && mirrorDir) void writeAssetsMd(mirrorDir, md).catch((e) => console.warn("ASSETS.md:", e));
   }, [md, mirrorDir]);
+  // Sala Godot: reservas de cena em .gfs/CENAS.md (o Claude lê antes de mexer em .tscn/.tres).
+  const cenas = useMemo(() => (isGodot ? scenesMd(claims.list, user.uid, claims.now) : ""), [isGodot, claims.list, claims.now, user.uid]);
+  useEffect(() => {
+    if (cenas && mirrorDir) void writeScenesMd(mirrorDir, cenas).catch((e) => console.warn("CENAS.md:", e));
+  }, [cenas, mirrorDir]);
   // Sala HTML5: erros do preview em .gfs/CONSOLE.md (o preview só manda quando o texto muda; pasta ligada depois recebe o último).
   const consoleText = useRef<string | null>(null);
   const writeConsole = useCallback(
@@ -356,6 +365,11 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
             🔒 Unreal{claims.list.some((c) => c.exp > claims.now) ? ` (${claims.list.filter((c) => c.exp > claims.now).length})` : ""}
           </button>
         )}
+        {isGodot && (
+          <button onClick={() => setModal("godot")} title="Verificar a Godot, rodar o jogo, Preview Web, capturar tela e reservar cenas">
+            🎮 Godot{claims.list.some((c) => c.exp > claims.now) ? ` (${claims.list.filter((c) => c.exp > claims.now).length})` : ""}
+          </button>
+        )}
         {isHtml5 && !readOnly && (
           <button className={building ? "building" : ""} onClick={() => setModal("build")} title="Gerar o jogo para Web, Android, Windows e Linux">
             {building ? "⚙️ Build…" : build.phase === "pronto" ? "🔨 Build ✅" : "🔨 Build"}
@@ -397,7 +411,34 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
       </div>
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}
-      {modal === "settings" && <SettingsModal room={room} onClose={() => setModal(null)} />}
+      {modal === "settings" && (
+        <SettingsModal
+          room={room}
+          onConvert={
+            isHtml5
+              ? async () => {
+                  await convertToGodot(room, sync);
+                  location.reload(); // a pasta do Claude e a tela recomeçam já como sala Godot
+                }
+              : undefined
+          }
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "godot" && (
+        <GodotPanel
+          room={room}
+          sync={sync}
+          me={authorOf(user)}
+          dir={mirrorDir}
+          readOnly={readOnly}
+          isOwner={role === "owner"}
+          claims={claims.list}
+          now={claims.now}
+          onStartMirror={startMirror}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === "build" && (
         <BuildPanel
           room={room}

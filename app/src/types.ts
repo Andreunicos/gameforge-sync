@@ -2,7 +2,7 @@ import type { Timestamp } from "firebase/firestore";
 import type { DvRoom } from "./diversion";
 import type { GitRoom } from "./gitContent";
 
-export type RoomKind = "html5" | "roblox" | "unreal";
+export type RoomKind = "html5" | "roblox" | "unreal" | "godot";
 export type Role = "owner" | "editor" | "viewer";
 
 export interface Room {
@@ -22,6 +22,8 @@ export interface Room {
   diversion?: DvRoom;
   /** Sala Unreal: repositório Git privado (GitHub + LFS) do Content/ (sem segredo; o token fica só no PC do dono). */
   git?: GitRoom;
+  /** Sala Godot: versão exigida (major.minor, ex.: "4.7"); ausente = a do project.godot, senão GODOT_VERSION. */
+  godotVersion?: string;
   createdAt?: Timestamp;
 }
 

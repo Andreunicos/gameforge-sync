@@ -22,7 +22,8 @@ import { fileDocId } from "./session";
 import { hasConflictMarkers, merge3 } from "./merge";
 import { CONSOLE_RULE, MODELOS_RULE, OLD_UE_PRESENCE, UNREAL_MCP_RULE, mergeClaudeSettings, roomTemplates, textHash, ueProjectRule, ueScripts } from "./templates";
 import { roomProject } from "../unreal";
-import { IGNORE_PATH, UNREAL_IGNORE_PATH, isCodePath } from "./fileKinds";
+import { GODOT_IGNORE_PATH, IGNORE_PATH, UNREAL_IGNORE_PATH, hasSecretContent, isCodePath } from "./fileKinds";
+import { conflictHint, godotProjectDirs } from "../godot";
 
 const IGNORE = IGNORE_PATH; // inclui builds/ = saída do botão BUILD
 const LOCAL_DEBOUNCE_MS = 700;
@@ -89,7 +90,12 @@ export class FolderMirror {
 
   private ignored(rel: string) {
     // Ponto no começo (.mcp.json, .vs/…) fica fora também no vigia, como já ficava na varredura (scanDisk).
-    return IGNORE.test(rel) || /(^|\/)\./.test(rel) || (this.room.kind === "unreal" && UNREAL_IGNORE_PATH.test(rel));
+    return (
+      IGNORE.test(rel) ||
+      /(^|\/)\./.test(rel) ||
+      (this.room.kind === "unreal" && UNREAL_IGNORE_PATH.test(rel)) ||
+      (this.room.kind === "godot" && GODOT_IGNORE_PATH.test(rel))
+    );
   }
 
   // ── ciclo de vida ──────────────────────────────────────────────────────
@@ -338,11 +344,15 @@ export class FolderMirror {
       });
     }
     // Arquivos novos criados na pasta com o app fechado.
-    for (const p of await this.scanDisk()) if (!remote.has(p)) await this.enqueue(p, () => this.push(p));
+    const onDisk = await this.scanDisk();
+    for (const p of onDisk) if (!remote.has(p)) await this.enqueue(p, () => this.push(p));
 
     // Toda sala ganha as regras do Claude e a visão do jogo.
     if (this.canEdit) {
+      // Sala Godot que já tem projeto (raiz ou subpasta): não cria um segundo project.godot/cena de exemplo na raiz.
+      const hasGodot = this.room.kind === "godot" && godotProjectDirs([...remote.keys(), ...onDisk]).length > 0;
       for (const [p, text] of roomTemplates(this.room.kind, this.room.name)) {
+        if (hasGodot && !p.endsWith(".md")) continue;
         if (remote.has(p) || (await this.readDisk(p)) !== null) continue;
         await this.writeDisk(p, text);
         await this.enqueue(p, () => this.push(p));
@@ -443,7 +453,7 @@ export class FolderMirror {
     if (m.conflicts) {
       this.sync.onToast({
         kind: "warn",
-        text: `Conflito em ${path} na pasta do Claude: ele e ${who(f.author)} mudaram as mesmas linhas. Peça ao Claude para resolver os marcadores <<<<<<< >>>>>>>.`,
+        text: `Conflito em ${path} na pasta do Claude: ele e ${who(f.author)} mudaram as mesmas linhas. Peça ao Claude para resolver os marcadores <<<<<<< >>>>>>>.${conflictHint(path)}`,
       });
     } else {
       await this.push(path);
@@ -468,6 +478,10 @@ export class FolderMirror {
     }
     if (b && disk === b.content && !verify) return;
     if (hasConflictMarkers(disk)) return;
+    if (hasSecretContent(path, disk)) {
+      this.sync.onToast({ kind: "warn", text: `${path} tem senha/chave preenchida e NÃO foi para a sala. Tire a senha do arquivo (a Godot 4.1+ guarda em .godot/export_credentials.cfg).` });
+      return;
+    }
     if (utf8Bytes(disk) > MAX_BIG_BYTES) {
       this.sync.onToast({
         kind: "warn",

@@ -2,15 +2,15 @@
 // (a última versão da sala de onde o texto local partiu) — é ela que permite o merge de 3 vias.
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { IGNORE_PATH, UE_PROJECT_SKIP, UNREAL_IGNORE_PATH, isCodePath } from "./fileKinds.ts";
+import { GODOT_IGNORE_PATH, GODOT_PROJECT_SKIP, IGNORE_PATH, UE_PROJECT_SKIP, UNREAL_IGNORE_PATH, hasSecretContent, isCodePath } from "./fileKinds.ts";
 
-/** Tem .uproject na pasta ou em subpasta até 2 níveis (sem entrar em pasta com ponto, gerada ou link). */
-function hasUproject(dir: string, depth = 0): boolean {
+/** Tem o arquivo do projeto (.uproject / project.godot) na pasta ou em subpasta até 2 níveis (sem entrar em pasta com ponto, gerada ou link). */
+function hasProject(dir: string, file: RegExp, skip: RegExp, depth = 0): boolean {
   try {
     return readdirSync(dir, { withFileTypes: true }).some((e) =>
       e.isFile()
-        ? /\.uproject$/i.test(e.name)
-        : e.isDirectory() && depth < 2 && !e.name.startsWith(".") && !UE_PROJECT_SKIP.test(e.name) && hasUproject(join(dir, e.name), depth + 1),
+        ? file.test(e.name)
+        : e.isDirectory() && depth < 2 && !e.name.startsWith(".") && !skip.test(e.name) && hasProject(join(dir, e.name), file, skip, depth + 1),
     );
   } catch {
     return false;
@@ -108,11 +108,14 @@ export class Workspace {
   /**
    * Todos os arquivos de código da pasta (caminhos com "/"), com as mesmas regras da pasta do Claude no app
    * (fileKinds.ts). Pasta com .uproject (na raiz ou numa subpasta, como acha o app) = sala Unreal: Content/, Binaries/,
-   * Intermediate/, Saved/... ficam de fora em qualquer nível.
+   * Intermediate/, Saved/... ficam de fora em qualquer nível. Pasta com project.godot = sala Godot (GODOT_IGNORE_PATH).
+   * export_presets.cfg com senha preenchida nunca sobe.
    */
   scan(): string[] {
-    const unreal = hasUproject(this.root);
-    const ignored = (rel: string) => IGNORE_PATH.test(rel) || (unreal && UNREAL_IGNORE_PATH.test(rel));
+    const unreal = hasProject(this.root, /\.uproject$/i, UE_PROJECT_SKIP);
+    const godot = hasProject(this.root, /^project\.godot$/i, GODOT_PROJECT_SKIP);
+    const ignored = (rel: string) =>
+      IGNORE_PATH.test(rel) || (unreal && UNREAL_IGNORE_PATH.test(rel)) || (godot && GODOT_IGNORE_PATH.test(rel)) || (/export_presets\.cfg$/i.test(rel) && hasSecretContent(rel, this.readLocal(rel) ?? ""));
     const out: string[] = [];
     const walk = (rel: string) => {
       for (const name of readdirSync(rel ? this.abs(rel) : this.root)) {

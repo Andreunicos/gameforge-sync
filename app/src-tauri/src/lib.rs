@@ -2,6 +2,7 @@ mod close;
 mod google;
 mod builds;
 mod gitcontent;
+mod godot;
 mod launch;
 mod rojo;
 mod unreal;
@@ -22,13 +23,14 @@ pub fn run() {
     builder
         .manage(rojo::RojoState::default())
         .manage(unreal::UnrealState::default())
+        .manage(godot::GodotState::default())
         .manage(close::CloseGuard::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 close::on_close_requested(window, api);
             }
         })
-        .invoke_handler(tauri::generate_handler![google::google_login, launch::open_with, launch::room_dir, builds::download_asset, builds::write_build_file, builds::reveal_build, rojo::rojo_start, rojo::rojo_stop, rojo::rojo_info, rojo::rojo_install, unreal::unreal_engines, unreal::unreal_open, unreal::unreal_server_start, unreal::unreal_server_stop, unreal::unreal_status, vpn::vpn_addrs,gitcontent::git_content, close::close_guard, close::app_close])
+        .invoke_handler(tauri::generate_handler![google::google_login, launch::open_with, launch::room_dir, builds::download_asset, builds::write_build_file, builds::reveal_build, rojo::rojo_start, rojo::rojo_stop, rojo::rojo_info, rojo::rojo_install, unreal::unreal_engines, unreal::unreal_open, unreal::unreal_server_start, unreal::unreal_server_stop, unreal::unreal_status, vpn::vpn_addrs,gitcontent::git_content, close::close_guard, close::app_close, godot::godot_info, godot::godot_import, godot::godot_run, godot::godot_stop, godot::godot_status, godot::godot_export_web, godot::godot_serve, godot::godot_capture])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -36,6 +38,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 tauri::Manager::state::<rojo::RojoState>(app).kill_all();
                 tauri::Manager::state::<unreal::UnrealState>(app).kill_all();
+                tauri::Manager::state::<godot::GodotState>(app).kill_all();
             }
         });
 }

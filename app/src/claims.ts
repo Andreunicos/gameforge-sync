@@ -43,6 +43,9 @@ const ref = (roomId: string) => doc(db, "rooms", roomId, "claims", "assets");
 export function claimKey(input: string): { key: string; path: string } | null {
   let p = input.trim().replace(/\\/g, "/");
   p = /'([^']+)'/.exec(p)?.[1] ?? p.replace(/^"|"$/g, "");
+  // Sala Godot: res://cenas/fase1.tscn = cenas/fase1.tscn (relativo à pasta do projeto; sem a regra do Content/ do Unreal).
+  const res = /^res:\/\//i.test(p);
+  if (res) p = p.slice(6);
   const folder = /\/\*?$/.test(p);
   p = p.replace(/\/\*?$/, "");
   if (/^\/Game(\/|$)/i.test(p)) p = "Content" + p.slice(5).replace(/\.[^/]*$/, ""); // tira o .NomeDoObjeto
@@ -51,7 +54,7 @@ export function claimKey(input: string): { key: string; path: string } | null {
   // Projeto numa subpasta da sala (TesteUnreal/Content/X.umap): a chave é a mesma de Content/X.umap e /Game/X.
   // Até 2 pastas antes, como a busca do projeto; Plugins/P/Content é de plugin (/P/, não /Game): fica como está.
   const c = parts.findIndex((s) => s.toLowerCase() === "content");
-  if ((c === 1 || c === 2) && parts[0].toLowerCase() !== "plugins") parts = parts.slice(c);
+  if (!res && (c === 1 || c === 2) && parts[0].toLowerCase() !== "plugins") parts = parts.slice(c);
   const path = parts.join("/") + (folder ? "/" : "");
   const key = (folder ? path : path.replace(/\.(uasset|umap)$/i, "")).toLowerCase();
   return key.length <= 300 ? { key, path } : null;

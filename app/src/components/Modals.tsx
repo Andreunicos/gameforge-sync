@@ -150,7 +150,8 @@ export function Cmd({ text }: { text: string }) {
   );
 }
 
-export function SettingsModal({ room, onClose }: { room: Room; onClose: () => void }) {
+/** `onConvert`: só em sala HTML5 (o painel só abre para o dono). */
+export function SettingsModal({ room, onConvert, onClose }: { room: Room; onConvert?: () => Promise<void>; onClose: () => void }) {
   const [name, setName] = useState(room.name);
   const [assetsBase, setAssetsBase] = useState(room.assetsBase);
   const [busy, setBusy] = useState(false);
@@ -183,6 +184,40 @@ export function SettingsModal({ room, onClose }: { room: Room; onClose: () => vo
         Imagens e sons ficam no repositório do jogo no GitHub (GitHub Pages). O preview busca os caminhos relativos nessa URL,
         ex.: <code>img/capivara.png</code> → <code>{(assetsBase || "https://…/").replace(/\/?$/, "/")}img/capivara.png</code>
       </p>
+      {onConvert && (
+        <>
+          <h4 style={{ marginBottom: 6 }}>Tipo da sala</h4>
+          <p className="small muted" style={{ margin: "0 0 6px" }}>
+            Esta é uma sala HTML5. Vai fazer o jogo na Godot 4.x? Converta: a sala ganha o botão 🎮 Godot (rodar, Preview Web, capturar tela,
+            reservar cenas). Nada é apagado.
+          </p>
+          <button
+            disabled={busy}
+            onClick={() => {
+              if (
+                !confirm(
+                  "Converter esta sala para Godot?\n\n" +
+                    "• O tipo da sala muda de HTML5 para Godot (o preview HTML5 e o BUILD somem; entra o botão 🎮 Godot).\n" +
+                    "• Nenhum arquivo é apagado nem sobrescrito.\n" +
+                    "• Se a sala ainda não tem project.godot, ela ganha um projeto Godot mínimo (project.godot, cena e script de exemplo, preset Web).\n" +
+                    "• O CLAUDE.md ganha as regras da Godot no fim.\n" +
+                    "• Quem estiver com app antigo continua vendo a sala como HTML5 até atualizar.\n\n" +
+                    "Para voltar, peça ao Claude do André (o campo kind da sala).",
+                )
+              )
+                return;
+              setBusy(true);
+              setError(null);
+              onConvert().catch((e) => {
+                setError(e instanceof Error ? e.message : String(e));
+                setBusy(false);
+              });
+            }}
+          >
+            🎮 Converter para Godot
+          </button>
+        </>
+      )}
       {error && <div className="error-box">{error}</div>}
       <div className="actions">
         <button onClick={onClose}>Cancelar</button>

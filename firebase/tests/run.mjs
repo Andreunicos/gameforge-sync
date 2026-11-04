@@ -10,6 +10,8 @@ console.log("── corrida com o claims.ts do app");
 await import("./race.mjs");
 console.log("── reserva automática");
 await import("./auto.mjs");
+console.log("── sala (tipo e versão da Godot)");
+await import("./rooms.mjs");
 const n = failures();
 console.log(n ? `${n} FALHA(S)` : "TUDO OK");
 process.exit(n ? 1 : 0);
