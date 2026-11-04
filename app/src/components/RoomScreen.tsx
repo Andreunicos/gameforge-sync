@@ -13,6 +13,7 @@ import type { Room } from "../types";
 import { FileList } from "./FileList";
 import { EditorPane } from "./EditorPane";
 import { PreviewPane } from "./PreviewPane";
+import { GodotPreview } from "./GodotPreview";
 import { ActivityFeed } from "./ActivityFeed";
 import { InviteModal, SettingsModal } from "./Modals";
 import { ClaudePanel, type OpenTool } from "./ClaudePanel";
@@ -115,7 +116,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
   const isGodot = room.kind === "godot";
   // kind ausente = html5 (salas antigas). Tipo desconhecido (app antigo vendo sala nova) também cai aqui.
   const isHtml5 = !isRoblox && !isUnreal && !isGodot;
-  const [showPreview, setShowPreview] = useState(isHtml5);
+  const [showPreview, setShowPreview] = useState(isHtml5 || isGodot);
   const claims = useClaims(room.id, isUnreal || isGodot); // Godot: reservas de cena (res://...)
   const rojo = useRojo(sync, isRoblox && isTauri());
   // Sala de Roblox em PC sem Rojo: abre o painel com o botão de instalar (uma vez).
@@ -339,7 +340,7 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
         >
           ✎ {writes.toLocaleString("pt-BR")} / {DAILY_WRITE_LIMIT.toLocaleString("pt-BR")}
         </span>
-        {isHtml5 && (
+        {(isHtml5 || isGodot) && (
           <button className="ghost" onClick={() => setShowPreview((v) => !v)} title="Mostrar/esconder o preview">
             {showPreview ? "◧ Preview" : "◻ Preview"}
           </button>
@@ -407,7 +408,8 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           <ActivityFeed roomId={room.id} />
         </aside>
         <EditorPane sync={sync} state={state} />
-        {showPreview && <PreviewPane sync={sync} room={room} onConsole={isHtml5 ? writeConsole : undefined} />}
+        {showPreview &&
+          (isGodot ? <GodotPreview sync={sync} room={room} dir={mirrorDir} /> : <PreviewPane sync={sync} room={room} onConsole={isHtml5 ? writeConsole : undefined} />)}
       </div>
 
       {modal === "invite" && <InviteModal user={user} room={room} onClose={() => setModal(null)} />}

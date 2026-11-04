@@ -152,7 +152,96 @@ ${rows.length ? rows.join("\n") : "Nenhuma reserva ativa."}
 `;
 }
 
+// ── preview ao vivo (jogo embutido / janela / Web) ───────────────────────
+
+export type GodotMode = "embed" | "window" | "web";
+export const GODOT_MODES: [GodotMode, string][] = [
+  ["embed", "Embutido (experimental)"],
+  ["window", "Janela solta"],
+  ["web", "Web"],
+];
+/** Modo guardado neste PC; desconhecido/vazio = embutido (testado no Windows com a Godot 4.7.2). */
+export const parseMode = (v: string | null | undefined): GodotMode => (v === "window" || v === "web" ? v : "embed");
+
+export interface EmbedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+/** Retângulo da tela (CSS px) → pixels físicos da janela, como o Rust espera (área cliente = página inteira no Tauri). */
+export function toPhysical(r: { left: number; top: number; width: number; height: number }, dpr: number): EmbedRect {
+  const x = Math.round(r.left * dpr);
+  const y = Math.round(r.top * dpr);
+  return { x, y, w: Math.max(0, Math.round((r.left + r.width) * dpr) - x), h: Math.max(0, Math.round((r.top + r.height) * dpr) - y) };
+}
+type Box = { left: number; top: number; right: number; bottom: number };
+/** A janela nativa do jogo fica por cima da página: qualquer modal/aviso que cruze a área esconde o jogo. */
+export const rectsOverlap = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+export const COVER_SELECTOR = ".modal-back, .toasts > *";
+
+/** Arquivos que mudam o jogo (o resto, como .md, não reinicia nada). */
+const LIVE_EXT = /\.(gd|tscn|tres|gdshader|gdshaderinc|godot|uid|json|csv|cfg|gdextension)$/i;
+const classNames = (s: string) => (s.match(/^\s*class_name\s+\w+/gm) ?? []).join("|");
+
+/**
+ * O que uma mudança de arquivo pede ao jogo ao vivo: nada, reiniciar, ou importar e reiniciar (arquivo novo/apagado,
+ * .uid, project.godot, class_name mudou: a Godot só vê isso no cache do .godot/). Fora do projeto, pastas com ponto
+ * (.godot/, .gfs/), saídas de build e export_presets.cfg não contam.
+ */
+export function liveChange(path: string, before: string | undefined, after: string | undefined, project: string): "none" | "restart" | "import" {
+  const pre = project ? `${project}/` : "";
+  if (pre && !path.toLowerCase().startsWith(pre.toLowerCase())) return "none";
+  const rel = path.slice(pre.length);
+  const segs = rel.split("/");
+  if (segs.slice(0, -1).some((s) => s.startsWith(".") || /^(builds?|exports?)$/i.test(s))) return "none";
+  if (!LIVE_EXT.test(rel) || /(^|\/)export_presets\.cfg$/i.test(rel) || segs[0].startsWith(".")) return "none";
+  if (before === after) return "none";
+  if (before === undefined || after === undefined || /\.(uid|godot|gdextension)$/i.test(rel)) return "import";
+  if (/\.gd$/i.test(rel) && classNames(before) !== classNames(after)) return "import";
+  return "restart";
+}
+
+/** Junta mudanças seguidas: roda uma vez `delay` ms depois da última, importando se alguma pediu. */
+export function liveQueue(delay: number, run: (doImport: boolean) => void) {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  let imp = false;
+  return {
+    push(kind: "restart" | "import") {
+      if (kind === "import") imp = true;
+      clearTimeout(t);
+      t = setTimeout(() => {
+        const i = imp;
+        imp = false;
+        t = undefined;
+        run(i);
+      }, delay);
+    },
+    cancel() {
+      clearTimeout(t);
+      t = undefined;
+      imp = false;
+    },
+  };
+}
+
 // ── este PC ──────────────────────────────────────────────────────────────
+
+const MODE_KEY = "gfs-godot-mode";
+export function loadMode(): GodotMode {
+  try {
+    return parseMode(localStorage.getItem(MODE_KEY));
+  } catch {
+    return "embed";
+  }
+}
+export function saveMode(m: GodotMode) {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    /* sem storage: vale só nesta sessão */
+  }
+}
 
 const BIN_KEY = "gfs-godot-bin";
 export function loadBin(): string {
@@ -215,6 +304,15 @@ export const godotStatus = (dir: string) => invoke<GodotStatus>("godot_status", 
 export const godotExportWeb = (dir: string, project: string | null) => invoke<ExportResult>("godot_export_web", { dir, bin: bin(), project });
 export const godotServe = (dir: string) => invoke<number>("godot_serve", { dir });
 export const godotCapture = (dir: string, project: string | null) => invoke<string>("godot_capture", { dir, bin: bin(), project });
+export interface EmbedStatus {
+  running: boolean;
+  code: number | null;
+  tail: string | null;
+}
+export const godotEmbedStart = (dir: string, project: string | null, rect: EmbedRect, visible: boolean) =>
+  invoke<void>("godot_embed_start", { dir, bin: bin(), project, rect, visible });
+export const godotEmbedRect = (dir: string, rect: EmbedRect, visible: boolean) => invoke<EmbedStatus>("godot_embed_rect", { dir, rect, visible });
+export const godotEmbedStop = () => invoke<void>("godot_embed_stop");
 
 /** Erro do Rust em português claro (os códigos vêm no começo da mensagem). */
 export function explain(e: unknown): string {

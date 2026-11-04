@@ -8,7 +8,25 @@ vi.mock("@tauri-apps/api/path", () => ({ join: async (...a: string[]) => a.join(
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({}));
 
-import { convertPlan, conflictHint, godotProjectDirs, hasWebPreset, installOffer, installVersion, majorMinor, projectVersion, releaseOf, requiredVersion, scenesMd, versionAdvice } from "../src/godot";
+import {
+  convertPlan,
+  conflictHint,
+  godotProjectDirs,
+  hasWebPreset,
+  installOffer,
+  installVersion,
+  liveChange,
+  liveQueue,
+  majorMinor,
+  parseMode,
+  projectVersion,
+  rectsOverlap,
+  releaseOf,
+  requiredVersion,
+  scenesMd,
+  toPhysical,
+  versionAdvice,
+} from "../src/godot";
 import { GODOT_IGNORE_PATH, IGNORE_PATH, hasSecretContent, isCodePath } from "../src/sync/fileKinds";
 import { GODOT_VERSION, godotProjectTemplates, roomTemplates } from "../src/sync/templates";
 import { claimKey, overlaps } from "../src/claims";
@@ -305,5 +323,68 @@ describe("instalar a Godot pelo app", () => {
     expect(installOffer(ok, "4.7")).toBeNull();
     expect(installOffer({ ...ok, web_templates: [] }, "4.7")).toBe("templates");
     expect(installOffer({ ...ok, version: "4.7.2.stable.mono.official.x", web_templates: [] }, "4.7")).toBeNull(); // .NET: manual
+  });
+});
+
+describe("preview ao vivo da Godot", () => {
+  it("só arquivos do jogo, dentro do projeto, reiniciam", () => {
+    expect(liveChange("scripts/player.gd", "a", "b", "")).toBe("restart");
+    expect(liveChange("scenes/main.tscn", "a", "b", "")).toBe("restart");
+    expect(liveChange("CLAUDE.md", "a", "b", "")).toBe("none");
+    expect(liveChange("scripts/player.gd", "a", "a", "")).toBe("none"); // mesma versão de novo
+    expect(liveChange(".godot/uid_cache.bin", "a", "b", "")).toBe("none");
+    expect(liveChange(".gfs/CENAS.md", "a", "b", "")).toBe("none");
+    expect(liveChange("builds/godot-web/index.js", "a", "b", "")).toBe("none");
+    expect(liveChange("export_presets.cfg", "a", "b", "")).toBe("none");
+    expect(liveChange("addons/x/.hidden/a.gd", "a", "b", "")).toBe("none");
+    // projeto em subpasta: o que está fora não conta
+    expect(liveChange("game/scripts/p.gd", "a", "b", "game")).toBe("restart");
+    expect(liveChange("other/p.gd", "a", "b", "game")).toBe("none");
+    expect(liveChange("Game/main.tscn", "a", "b", "game")).toBe("restart");
+  });
+  it("importa antes quando a Godot precisa do cache do .godot/", () => {
+    expect(liveChange("scripts/new.gd", undefined, "extends Node", "")).toBe("import"); // arquivo novo
+    expect(liveChange("scripts/old.gd", "extends Node", undefined, "")).toBe("import"); // apagado
+    expect(liveChange("scripts/p.gd.uid", "uid://a", "uid://b", "")).toBe("import");
+    expect(liveChange("project.godot", "a", "b", "")).toBe("import");
+    expect(liveChange("scripts/p.gd", "extends Node\nclass_name A\n", "extends Node\nclass_name B\n", "")).toBe("import");
+    expect(liveChange("scripts/p.gd", "class_name A\nvar x = 1", "class_name A\nvar x = 2", "")).toBe("restart");
+  });
+  it("junta mudanças seguidas num reinício só (1,5 s de silêncio) e importa se alguma pediu", () => {
+    vi.useFakeTimers();
+    const runs: boolean[] = [];
+    const q = liveQueue(1500, (i) => runs.push(i));
+    q.push("restart");
+    vi.advanceTimersByTime(1000);
+    q.push("import");
+    vi.advanceTimersByTime(1000);
+    q.push("restart");
+    vi.advanceTimersByTime(1499);
+    expect(runs).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(runs).toEqual([true]);
+    q.push("restart");
+    vi.advanceTimersByTime(1500);
+    expect(runs).toEqual([true, false]); // o import não fica grudado
+    q.push("import");
+    q.cancel();
+    vi.advanceTimersByTime(5000);
+    expect(runs).toEqual([true, false]);
+    vi.useRealTimers();
+  });
+  it("converte o retângulo da tela para pixels físicos (HiDPI)", () => {
+    expect(toPhysical({ left: 10, top: 20, width: 300, height: 200 }, 1)).toEqual({ x: 10, y: 20, w: 300, h: 200 });
+    expect(toPhysical({ left: 10.5, top: 20.25, width: 300.3, height: 200 }, 1.5)).toEqual({ x: 16, y: 30, w: 450, h: 300 });
+    expect(toPhysical({ left: 0, top: 0, width: 0, height: 0 }, 2)).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+    const area = { left: 600, top: 40, right: 1200, bottom: 700 };
+    expect(rectsOverlap({ left: 0, top: 0, right: 1920, bottom: 1080 }, area)).toBe(true); // modal cobre a tela toda
+    expect(rectsOverlap({ left: 1210, top: 900, right: 1600, bottom: 1000 }, area)).toBe(false); // aviso fora da área
+    expect(rectsOverlap({ left: 1000, top: 650, right: 1400, bottom: 750 }, area)).toBe(true);
+  });
+  it("modo guardado: desconhecido ou vazio = embutido", () => {
+    expect(parseMode(null)).toBe("embed");
+    expect(parseMode("xyz")).toBe("embed");
+    expect(parseMode("window")).toBe("window");
+    expect(parseMode("web")).toBe("web");
   });
 });

@@ -37,7 +37,10 @@
     "allow-godot-serve",
     "allow-godot-capture",
     "allow-godot-install",
-    "allow-godot-install-cancel"
+    "allow-godot-install-cancel",
+    "allow-godot-embed-start",
+    "allow-godot-embed-rect",
+    "allow-godot-embed-stop"
   ],
   "remote": {
     "urls": [

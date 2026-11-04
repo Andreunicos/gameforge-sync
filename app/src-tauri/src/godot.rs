@@ -19,11 +19,19 @@ use crate::rojo::quiet;
 pub struct GodotState {
     games: Mutex<HashMap<String, Child>>,
     servers: Mutex<HashMap<String, (u16, Arc<AtomicBool>)>>,
+    /// O jogo embutido na área de Preview (um só no app inteiro: uma sala por vez).
+    embed: Arc<Mutex<Option<Embed>>>,
 }
 
 impl GodotState {
     /// Ao sair do app: fecha os jogos e os servidores do preview.
     pub fn kill_all(&self) {
+        if let Ok(mut e) = self.embed.lock() {
+            if let Some(mut e) = e.take() {
+                let _ = e.child.kill();
+                let _ = e.child.wait();
+            }
+        }
         if let Ok(mut map) = self.games.lock() {
             for (_, child) in map.iter_mut() {
                 let _ = child.kill();
@@ -405,6 +413,287 @@ pub fn godot_status(state: tauri::State<GodotState>, dir: String) -> GodotStatus
     let running = state.games.lock().map(|mut g| g.get_mut(&dir).is_some_and(|c| matches!(c.try_wait(), Ok(None)))).unwrap_or(false);
     let port = state.servers.lock().ok().and_then(|s| s.get(&dir).map(|(p, _)| *p));
     GodotStatus { running, port }
+}
+
+// ── jogo embutido na área de Preview (Windows) ──────────────────────────────
+//
+// Mesmo mecanismo do "Game" embutido do editor da Godot 4.4+ no Windows (editor/run/game_view_plugin.cpp +
+// DisplayServerWindows::embed_process): `--wid <HWND> --position x,y --resolution WxH` faz a Godot criar a janela do
+// jogo sem borda, fora da barra de tarefas, como popup DONA da janela do app (owner, não WS_CHILD: a Godot evita
+// filho entre processos de propósito, por causa da fila de entrada). Daí quem posiciona é quem embute: um vigia
+// coloca a janela sobre o retângulo da área de Preview (coordenadas de tela, físicas) a cada 40 ms, esconde quando
+// a tela pede (modal por cima), quando o app minimiza ou quando a tela para de mandar sinal (página recarregou).
+
+#[derive(serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub struct EmbedRect {
+    /// Pixels físicos relativos ao canto da área cliente da janela do app (getBoundingClientRect × devicePixelRatio).
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+struct Embed {
+    dir: String,
+    child: Child,
+    owner: isize,
+    rect: EmbedRect,
+    visible: bool,
+    beat: Instant,
+    gen: u64,
+    log: PathBuf,
+    /// Código de saída e últimas linhas do log quando o jogo fechou sozinho.
+    exited: Option<(i32, String)>,
+}
+
+/// Sem sinal da tela por mais que isto = esconde; por mais que `ORPHAN` = fecha o jogo (tela recarregou ou saiu da sala).
+const BEAT_HIDE: Duration = Duration::from_secs(3);
+const ORPHAN: Duration = Duration::from_secs(15);
+
+/// Janela pequena demais não vale mostrar (a Godot faz o mesmo no embed_process).
+fn shows(r: &EmbedRect) -> bool {
+    r.w > 100 && r.h > 100
+}
+
+/// Godot mede a posição a partir do canto do monitor mais à esquerda/acima (origem ≤ 0); o Windows, do monitor principal.
+fn godot_pos(screen: (i32, i32), origin: (i32, i32)) -> (i32, i32) {
+    (screen.0 - origin.0.min(0), screen.1 - origin.1.min(0))
+}
+
+#[cfg(windows)]
+mod win {
+    #[repr(C)]
+    #[derive(Default)]
+    pub struct Rect {
+        pub l: i32,
+        pub t: i32,
+        pub r: i32,
+        pub b: i32,
+    }
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn EnumWindows(cb: extern "system" fn(isize, isize) -> i32, l: isize) -> i32;
+        fn GetWindowThreadProcessId(h: isize, pid: *mut u32) -> u32;
+        fn GetWindow(h: isize, cmd: u32) -> isize;
+        fn GetClassNameW(h: isize, buf: *mut u16, n: i32) -> i32;
+        fn SetWindowPos(h: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        fn ShowWindow(h: isize, cmd: i32) -> i32;
+        fn IsWindowVisible(h: isize) -> i32;
+        fn IsIconic(h: isize) -> i32;
+        fn GetWindowRect(h: isize, r: *mut Rect) -> i32;
+        fn ClientToScreen(h: isize, p: *mut Point) -> i32;
+        fn GetSystemMetrics(i: i32) -> i32;
+        fn SetForegroundWindow(h: isize) -> i32;
+    }
+
+    struct Find {
+        pid: u32,
+        owner: isize,
+        found: isize,
+    }
+    extern "system" fn each(h: isize, l: isize) -> i32 {
+        // SAFETY: `l` é o &mut Find de `find`, vivo durante o EnumWindows.
+        let f = unsafe { &mut *(l as *mut Find) };
+        let mut pid = 0u32;
+        let mut class = [0u16; 16];
+        // SAFETY: ponteiros válidos; tamanho do buffer correto.
+        let n = unsafe {
+            GetWindowThreadProcessId(h, &mut pid);
+            if pid != f.pid || GetWindow(h, 4 /* GW_OWNER */) != f.owner {
+                return 1;
+            }
+            GetClassNameW(h, class.as_mut_ptr(), class.len() as i32)
+        };
+        if String::from_utf16_lossy(&class[..n.max(0) as usize]) == "Engine" {
+            f.found = h;
+            return 0;
+        }
+        1
+    }
+    /// A janela principal do jogo: classe "Engine" da Godot, do processo `pid`, dona = janela do app.
+    pub fn find(pid: u32, owner: isize) -> isize {
+        let mut f = Find { pid, owner, found: 0 };
+        // SAFETY: callback e ponteiro válidos durante a chamada.
+        unsafe { EnumWindows(each, &mut f as *mut Find as isize) };
+        f.found
+    }
+    pub fn to_screen(h: isize, x: i32, y: i32) -> (i32, i32) {
+        let mut p = Point { x, y };
+        // SAFETY: ponteiro válido.
+        unsafe { ClientToScreen(h, &mut p) };
+        (p.x, p.y)
+    }
+    /// Canto de cima/esquerda da área de trabalho virtual (todos os monitores).
+    pub fn origin() -> (i32, i32) {
+        // SAFETY: sem ponteiros. 76/77 = SM_XVIRTUALSCREEN/SM_YVIRTUALSCREEN.
+        unsafe { (GetSystemMetrics(76), GetSystemMetrics(77)) }
+    }
+    pub fn iconic(h: isize) -> bool {
+        // SAFETY: só lê estado da janela.
+        unsafe { IsIconic(h) != 0 }
+    }
+    pub fn rect(h: isize) -> Rect {
+        let mut r = Rect::default();
+        // SAFETY: ponteiro válido.
+        unsafe { GetWindowRect(h, &mut r) };
+        r
+    }
+    pub fn visible(h: isize) -> bool {
+        // SAFETY: só lê estado da janela.
+        unsafe { IsWindowVisible(h) != 0 }
+    }
+    pub fn place(h: isize, x: i32, y: i32, w: i32, hh: i32) {
+        // SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS: não rouba foco nem espera o outro processo.
+        // SAFETY: HWND de outro processo; o Windows valida.
+        unsafe { SetWindowPos(h, 0, x, y, w, hh, 0x0004 | 0x0010 | 0x4000) };
+    }
+    pub fn show(h: isize, on: bool) {
+        // SAFETY: idem. 8 = SW_SHOWNA (mostra sem ativar), 0 = SW_HIDE.
+        unsafe { ShowWindow(h, if on { 8 } else { 0 }) };
+    }
+    pub fn focus(h: isize) {
+        // SAFETY: idem.
+        unsafe { SetForegroundWindow(h) };
+    }
+}
+
+/// Mantém a janela do jogo em cima da área de Preview até o jogo fechar ou outro embutido começar.
+#[cfg(windows)]
+fn track(slot: Arc<Mutex<Option<Embed>>>, gen: u64) {
+    let mut game = 0isize;
+    loop {
+        std::thread::sleep(Duration::from_millis(40));
+        let Ok(mut g) = slot.lock() else { return };
+        let Some(e) = g.as_mut().filter(|e| e.gen == gen) else { return };
+        if e.exited.is_some() {
+            return;
+        }
+        if let Ok(Some(st)) = e.child.try_wait() {
+            e.exited = Some((st.code().unwrap_or(-1), tail(&e.log)));
+            return;
+        }
+        if e.beat.elapsed() > ORPHAN {
+            let _ = e.child.kill();
+            let _ = e.child.wait();
+            *g = None;
+            return;
+        }
+        if game == 0 {
+            game = win::find(e.child.id(), e.owner);
+            if game == 0 {
+                continue;
+            }
+        }
+        let want = e.visible && shows(&e.rect) && e.beat.elapsed() < BEAT_HIDE && !win::iconic(e.owner);
+        if want {
+            let (x, y) = win::to_screen(e.owner, e.rect.x, e.rect.y);
+            let r = win::rect(game);
+            if (r.l, r.t, r.r - r.l, r.b - r.t) != (x, y, e.rect.w, e.rect.h) {
+                win::place(game, x, y, e.rect.w, e.rect.h);
+            }
+        }
+        if win::visible(game) != want {
+            win::show(game, want);
+        }
+    }
+}
+
+static EMBED_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn stop_embed(slot: &Mutex<Option<Embed>>) {
+    let old = slot.lock().ok().and_then(|mut e| e.take());
+    if let Some(mut e) = old {
+        let _ = e.child.kill();
+        let _ = e.child.wait();
+        #[cfg(windows)]
+        win::focus(e.owner); // a janela do app volta a ficar ativa (o jogo podia estar com o foco)
+    }
+}
+
+/// Abre (ou reabre: fecha o anterior) o jogo embutido na área de Preview: `godot --path <projeto> --wid <janela do app>
+/// --position --resolution`. Saída em .gfs/godot-run.log. `rect` em pixels físicos relativos à área cliente do app.
+#[tauri::command(async)]
+#[allow(unused_variables)]
+pub fn godot_embed_start(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<GodotState>,
+    dir: String,
+    bin: Option<String>,
+    project: Option<String>,
+    rect: EmbedRect,
+    visible: bool,
+) -> Result<(), String> {
+    #[cfg(not(windows))]
+    return Err("o jogo embutido só funciona no Windows: use Janela solta ou Web".into());
+    #[cfg(windows)]
+    {
+        let room = check_room_dir(&app, &dir)?;
+        let proj = self::project(&room, project.as_deref())?;
+        let (exe, _) = exe(bin.as_deref())?;
+        stop_embed(&state.embed);
+        if !proj.join(".godot").is_dir() {
+            import(&exe, &room, &proj)?;
+        }
+        let owner = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
+        let (x, y) = godot_pos(win::to_screen(owner, rect.x, rect.y), win::origin());
+        let log_path = gfs(&room, "godot-run.log");
+        let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
+        let mut child = quiet(
+            Command::new(gui(&exe))
+                .arg("--path")
+                .arg(&proj)
+                .args(["--wid", &owner.to_string(), "--position", &format!("{x},{y}"), "--resolution", &format!("{}x{}", rect.w.max(64), rect.h.max(64))]),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
+        .stderr(Stdio::from(log))
+        .spawn()
+        .map_err(|e| e.to_string())?;
+        std::thread::sleep(Duration::from_millis(500));
+        if let Ok(Some(_)) = child.try_wait() {
+            return Err(format!("RUN_FAILED: a Godot fechou ao abrir. {}", tail(&log_path)));
+        }
+        let gen = EMBED_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+        *state.embed.lock().map_err(|e| e.to_string())? = Some(Embed { dir, child, owner, rect, visible, beat: Instant::now(), gen, log: log_path, exited: None });
+        let slot = state.embed.clone();
+        std::thread::spawn(move || track(slot, gen));
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct EmbedStatus {
+    running: bool,
+    /// Código de saída quando o jogo fechou sozinho (com `tail` = últimas linhas de .gfs/godot-run.log).
+    code: Option<i32>,
+    tail: Option<String>,
+}
+
+/// Posição/visibilidade da área de Preview; a tela chama ao mudar e a cada 1 s (sinal de vida: sem ele o jogo some e fecha).
+#[tauri::command]
+pub fn godot_embed_rect(state: tauri::State<GodotState>, dir: String, rect: EmbedRect, visible: bool) -> EmbedStatus {
+    let Ok(mut g) = state.embed.lock() else { return EmbedStatus::default() };
+    match g.as_mut().filter(|e| e.dir == dir) {
+        Some(e) => {
+            e.rect = rect;
+            e.visible = visible;
+            e.beat = Instant::now();
+            EmbedStatus { running: e.exited.is_none(), code: e.exited.as_ref().map(|x| x.0), tail: e.exited.as_ref().map(|x| x.1.clone()) }
+        }
+        None => EmbedStatus::default(),
+    }
+}
+
+/// Fecha o jogo embutido (sair da sala, ⏸, trocar de modo).
+#[tauri::command(async)]
+pub fn godot_embed_stop(state: tauri::State<GodotState>) {
+    stop_embed(&state.embed);
 }
 
 // ── export Web ──────────────────────────────────────────────────────────────
@@ -943,6 +1232,115 @@ mod tests {
         assert_eq!(exes.len(), 2);
         assert!(calls > 10);
         assert!(http(&format!("{RELEASES}/4.7.99-stable/SHA512-SUMS.txt")).unwrap_err().starts_with("NOT_FOUND"));
+    }
+
+    #[test]
+    fn embed_coords() {
+        // monitor à esquerda do principal (origem -1920,0): x de tela -1900 = 20 na conta da Godot
+        assert_eq!(godot_pos((-1900, 40), (-1920, 0)), (20, 40));
+        assert_eq!(godot_pos((300, 200), (0, 0)), (300, 200));
+        assert_eq!(godot_pos((300, 200), (0, -1080)), (300, 1280));
+        assert!(shows(&EmbedRect { x: 0, y: 0, w: 640, h: 360 }) && !shows(&EmbedRect { x: 0, y: 0, w: 640, h: 90 }));
+    }
+
+    /// Godot de verdade embutida numa janela de teste: `--wid` cria a janela "Engine" dona da nossa, o vigia põe no
+    /// retângulo pedido, esconde e mostra. Rodar com GFS_GODOT_EXE=<Godot_v4...exe> cargo test --lib godot -- --ignored embed_real
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn embed_real() {
+        #[link(name = "user32")]
+        extern "system" {
+            fn CreateWindowExW(ex: u32, class: *const u16, title: *const u16, style: u32, x: i32, y: i32, w: i32, h: i32, parent: isize, menu: isize, inst: isize, p: isize) -> isize;
+            fn DestroyWindow(h: isize) -> i32;
+            fn PeekMessageW(m: *mut [u8; 64], h: isize, a: u32, b: u32, rm: u32) -> i32;
+            fn DispatchMessageW(m: *const [u8; 64]) -> isize;
+        }
+        let pump = |ms: u64| {
+            let end = Instant::now() + Duration::from_millis(ms);
+            let mut m = [0u8; 64];
+            while Instant::now() < end {
+                // SAFETY: buffer maior que MSG; PM_REMOVE = 1.
+                while unsafe { PeekMessageW(&mut m, 0, 0, 0, 1) } != 0 {
+                    unsafe { DispatchMessageW(&m) };
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let w = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let exe = PathBuf::from(std::env::var("GFS_GODOT_EXE").expect("GFS_GODOT_EXE"));
+        let dir = std::env::temp_dir().join(format!("gfs-embed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("project.godot"), "config_version=5\n\n[application]\nrun/main_scene=\"res://main.tscn\"\nconfig/features=PackedStringArray(\"4.7\", \"GL Compatibility\")\n\n[rendering]\nrenderer/rendering_method=\"gl_compatibility\"\n").unwrap();
+        std::fs::write(dir.join("main.gd"), "extends ColorRect\n\nfunc _ready():\n\tawait get_tree().create_timer(1.5).timeout\n\tprint(\"EMBED_SIZE \", get_window().size, \" EMBEDDED \", Engine.is_embedded_in_editor())\n").unwrap();
+        std::fs::write(dir.join("main.tscn"), "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://main.gd\" id=\"1\"]\n\n[node name=\"Main\" type=\"ColorRect\"]\nanchor_right=1.0\nanchor_bottom=1.0\ncolor=Color(0.9, 0.2, 0.5, 1)\nscript=ExtResource(\"1\")\n").unwrap();
+        let log = dir.join("run.log");
+        let (ok, out) = run_logged(&exe, &["--headless".as_ref(), "--path".as_ref(), dir.as_os_str(), "--import".as_ref()], &dir.join("import.log"), Duration::from_secs(120)).unwrap();
+        assert!(ok, "import: {out}");
+        // SAFETY: classe STATIC do sistema; janela de topo visível (WS_OVERLAPPEDWINDOW | WS_VISIBLE).
+        let owner = unsafe { CreateWindowExW(0, w("STATIC").as_ptr(), w("gfs embed test").as_ptr(), 0x00CF_0000 | 0x1000_0000, 100, 100, 900, 700, 0, 0, 0, 0) };
+        assert!(owner != 0);
+        pump(300);
+        let rect = EmbedRect { x: 50, y: 60, w: 640, h: 360 };
+        let (x, y) = godot_pos(win::to_screen(owner, rect.x, rect.y), win::origin());
+        let f = std::fs::File::create(&log).unwrap();
+        let child = Command::new(gui(&exe))
+            .arg("--path")
+            .arg(&dir)
+            .args(["--wid", &owner.to_string(), "--position", &format!("{x},{y}"), "--resolution", "640x360"])
+            .stdout(Stdio::from(f.try_clone().unwrap()))
+            .stderr(Stdio::from(f))
+            .spawn()
+            .unwrap();
+        let slot = Arc::new(Mutex::new(Some(Embed { dir: "t".into(), child, owner, rect, visible: true, beat: Instant::now(), gen: 1, log: log.clone(), exited: None })));
+        let s2 = slot.clone();
+        std::thread::spawn(move || track(s2, 1));
+        let pid = slot.lock().unwrap().as_ref().unwrap().child.id();
+        let mut game = 0;
+        for _ in 0..100 {
+            pump(100);
+            game = win::find(pid, owner);
+            if game != 0 && win::visible(game) {
+                break;
+            }
+        }
+        assert!(game != 0, "janela da Godot não apareceu: {}", tail(&log));
+        pump(800);
+        let (sx, sy) = win::to_screen(owner, 50, 60);
+        let r = win::rect(game);
+        assert_eq!((r.l, r.t, r.r - r.l, r.b - r.t), (sx, sy, 640, 360));
+        assert!(win::visible(game));
+        // a tela mexeu o retângulo: o vigia move
+        if let Some(e) = slot.lock().unwrap().as_mut() {
+            e.rect = EmbedRect { x: 10, y: 20, w: 500, h: 300 };
+            e.beat = Instant::now();
+        }
+        pump(500);
+        let (sx, sy) = win::to_screen(owner, 10, 20);
+        let r = win::rect(game);
+        assert_eq!((r.l, r.t, r.r - r.l, r.b - r.t), (sx, sy, 500, 300));
+        if let Some(e) = slot.lock().unwrap().as_mut() {
+            e.visible = false;
+            e.beat = Instant::now();
+        }
+        pump(400);
+        assert!(!win::visible(game));
+        if let Some(e) = slot.lock().unwrap().as_mut() {
+            e.visible = true;
+            e.beat = Instant::now();
+        }
+        pump(1500);
+        assert!(win::visible(game));
+        let text = String::from_utf8_lossy(&std::fs::read(&log).unwrap()).into_owned();
+        println!("--- log do jogo ---\n{text}");
+        assert!(text.contains("EMBED_SIZE (500, 300)") || text.contains("EMBED_SIZE (640, 360)"), "{text}");
+        stop_embed(&slot);
+        pump(300);
+        assert!(win::find(pid, owner) == 0);
+        // SAFETY: janela criada acima.
+        unsafe { DestroyWindow(owner) };
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
