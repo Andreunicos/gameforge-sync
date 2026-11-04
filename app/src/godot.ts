@@ -1,6 +1,7 @@
 // Salas Godot 4.x: regras puras (versão, project.godot, preset Web, conversão de sala HTML5) e as chamadas ao Rust
 // (src-tauri/src/godot.rs). O caminho do executável digitado fica só neste PC (localStorage), nunca no Firebase.
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { join } from "@tauri-apps/api/path";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { hhmm, type Claim } from "./claims";
@@ -56,6 +57,49 @@ export function versionAdvice(installed: string | null, required: string): strin
   return older
     ? `Sua Godot é a ${mm}, mais velha que a ${required} da sala: o projeto pode não abrir ou perder coisas. Instale a ${required}.`
     : `Sua Godot é a ${mm}, mais nova que a ${required} da sala: ao salvar, ela pode converter as cenas e quebrar o projeto dos outros. Use a ${required} (ou combine com todos de subir a versão).`;
+}
+
+/** Última patch estável conhecida de cada linha (fallback quando a API do GitHub não responde). Conferido em 04/11/2026. */
+export const KNOWN_PATCH: Record<string, string> = { "4.3": "4.3", "4.4": "4.4.1", "4.5": "4.5.2", "4.6": "4.6.3", "4.7": "4.7.2" };
+
+/**
+ * Versão a instalar para a sala ("4.7" → "4.7.2"): a maior "X.Y[.Z]-stable" entre as tags do godotengine/godot-builds,
+ * senão a tabela KNOWN_PATCH, senão a própria "X.Y" (o release "4.7-stable" existe sem ".0"). "X.Y.Z" volta igual.
+ */
+export function installVersion(required: string, tags: string[] = []): string {
+  if (/^\d+\.\d+\.\d+$/.test(required)) return required;
+  let best = -1;
+  for (const t of tags) {
+    const m = /^(\d+\.\d+)(?:\.(\d+))?-stable$/.exec(t);
+    if (m && m[1] === required) best = Math.max(best, Number(m[2] ?? 0));
+  }
+  if (best > 0) return `${required}.${best}`;
+  if (best === 0) return required;
+  return KNOWN_PATCH[required] ?? required;
+}
+
+/** Versão do release de uma Godot instalada, para baixar os templates iguais: "4.7.2.stable.official.x" → "4.7.2". Só a oficial estável sem .NET. */
+export function releaseOf(version: string | null | undefined): string | null {
+  const m = /^(\d+\.\d+(?:\.\d+)?)\.stable\.official\b/.exec(version ?? "");
+  return m && !/\bmono\b/.test(version ?? "") ? m[1] : null;
+}
+
+/** O que o Verificar oferece: instalar a Godot (falta ou é de outra versão), só os templates, ou nada. */
+export function installOffer(info: Pick<GodotInfo, "found" | "version" | "web_templates"> | null, required: string): "engine" | "templates" | null {
+  if (!info) return null;
+  if (!info.found || majorMinor(info.version) !== required) return "engine";
+  return info.web_templates.length === 0 && releaseOf(info.version) ? "templates" : null;
+}
+
+/** Tags dos releases da Godot (API pública do GitHub, 60/h sem login). Falhou = [] e vale a tabela. */
+export async function godotTags(): Promise<string[]> {
+  try {
+    const r = await fetch("https://api.github.com/repos/godotengine/godot-builds/releases?per_page=100", { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return [];
+    return ((await r.json()) as { tag_name?: string }[]).map((x) => x.tag_name ?? "");
+  } catch {
+    return [];
+  }
 }
 
 /** Pastas da sala com project.godot (relativas, "" = raiz), até 2 níveis, como a busca do Rust (godot.rs). Raiz primeiro. */
@@ -145,7 +189,25 @@ export function saveProject(roomId: string, p: string) {
 // ── Rust ─────────────────────────────────────────────────────────────────
 
 const bin = () => loadBin() || null;
-export const godotInfo = () => invoke<GodotInfo>("godot_info", { bin: bin() });
+export const godotInfo = (want?: string) => invoke<GodotInfo>("godot_info", { bin: bin(), want: want ?? null });
+
+export interface InstallProgress {
+  phase: "engine" | "templates" | "extraindo";
+  done: number;
+  total: number;
+}
+/** Instala a Godot (e/ou os templates) e guarda o caminho do exe neste PC. Progresso por `onProgress`. */
+export async function godotInstall(version: string, withTemplates: boolean, engine: boolean, onProgress: (p: InstallProgress) => void) {
+  const stop = await listen<InstallProgress>("godot-install", (e) => onProgress(e.payload));
+  try {
+    const exe = await invoke<string | null>("godot_install", { version, withTemplates, engine });
+    if (exe) saveBin(exe);
+    return exe;
+  } finally {
+    stop();
+  }
+}
+export const godotInstallCancel = () => invoke<void>("godot_install_cancel");
 export const godotImport = (dir: string, project: string | null) => invoke<string>("godot_import", { dir, bin: bin(), project });
 export const godotRun = (dir: string, project: string | null) => invoke<void>("godot_run", { dir, bin: bin(), project });
 export const godotStop = (dir: string) => invoke<void>("godot_stop", { dir });
@@ -157,8 +219,12 @@ export const godotCapture = (dir: string, project: string | null) => invoke<stri
 /** Erro do Rust em português claro (os códigos vêm no começo da mensagem). */
 export function explain(e: unknown): string {
   const s = String(e);
-  if (s.startsWith("NO_TEMPLATE")) return `Faltam os "export templates" desta versão da Godot (sem eles não dá para exportar para Web). Na Godot: Editor → Gerenciar Modelos de Exportação → Baixar. ${s.slice(13)}`;
+  if (s.startsWith("NO_TEMPLATE")) return `Faltam os "export templates" desta versão da Godot (sem eles não dá para exportar para Web). Use o botão "Instalar templates" acima (ou, na Godot: Editor → Gerenciar Modelos de Exportação → Baixar). ${s.slice(13)}`;
   if (s.startsWith("NO_PRESET")) return `O projeto não tem o preset de exportação "Web". Na Godot: Projeto → Exportar → Adicionar → Web, com o nome exato "Web" (ou peça ao Claude para criar no export_presets.cfg).`;
+  if (s.startsWith("CANCELADO")) return "Instalação cancelada. Nada ficou pela metade.";
+  if (s.startsWith("NOT_FOUND")) return "Essa versão da Godot não existe no site oficial (godot-builds). Confira a versão da sala.";
+  if (s.startsWith("NET")) return `Falhou a conexão com o GitHub. Confira a internet e tente de novo. (${s.slice(5)})`;
+  if (s.startsWith("DOWNLOAD_RUIM")) return `O arquivo baixado veio estragado e foi apagado. Tente de novo. (${s.slice(15)})`;
   if (s.startsWith("SEM_PROJECT")) return "Não achei o project.godot na pasta da sala (nem em subpastas até 2 níveis). A pasta do Claude está ligada?";
   return s.replace(/^[A-Z_]+: /, "");
 }

@@ -35,7 +35,9 @@
     "allow-godot-status",
     "allow-godot-export-web",
     "allow-godot-serve",
-    "allow-godot-capture"
+    "allow-godot-capture",
+    "allow-godot-install",
+    "allow-godot-install-cancel"
   ],
   "remote": {
     "urls": [

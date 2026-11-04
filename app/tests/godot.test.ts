@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/path", () => ({ join: async (...a: string[]) => a.join(
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({}));
 
-import { convertPlan, conflictHint, godotProjectDirs, hasWebPreset, majorMinor, projectVersion, requiredVersion, scenesMd, versionAdvice } from "../src/godot";
+import { convertPlan, conflictHint, godotProjectDirs, hasWebPreset, installOffer, installVersion, majorMinor, projectVersion, releaseOf, requiredVersion, scenesMd, versionAdvice } from "../src/godot";
 import { GODOT_IGNORE_PATH, IGNORE_PATH, hasSecretContent, isCodePath } from "../src/sync/fileKinds";
 import { GODOT_VERSION, godotProjectTemplates, roomTemplates } from "../src/sync/templates";
 import { claimKey, overlaps } from "../src/claims";
@@ -272,5 +272,38 @@ describe("3 pessoas na mesma cena e no mesmo script", () => {
     expect([push(s3, a3), push(s3, b3)]).toEqual(["ok", "ok"]);
     expect(s3.content).toContain('id="3_aa111"');
     expect(s3.content).toContain("zoom = Vector2(4, 4)");
+  });
+});
+
+describe("instalar a Godot pelo app", () => {
+  const tags = ["4.8-beta2", "4.7.2-stable", "4.7.2-rc1", "4.7.1-stable", "4.7-stable", "4.6.3-stable", "4.6-stable", "4.5-stable", "3.6.3-stable"];
+  it("escolhe a última patch estável da linha da sala", () => {
+    expect(installVersion("4.7", tags)).toBe("4.7.2");
+    expect(installVersion("4.6", tags)).toBe("4.6.3");
+    expect(installVersion("4.5", tags)).toBe("4.5"); // release "4.5-stable" sem ".0"
+    expect(installVersion("4.7.1", tags)).toBe("4.7.1"); // versão exata fica
+    expect(installVersion("4.8", tags)).toBe("4.8"); // só beta: tenta "4.8-stable"
+  });
+  it("sem a API do GitHub usa a tabela, senão a própria X.Y", () => {
+    expect(installVersion("4.7")).toBe("4.7.2");
+    expect(installVersion("4.4", [])).toBe("4.4.1");
+    expect(installVersion("4.9", [])).toBe("4.9");
+  });
+  it("lê o release da Godot instalada (para os templates iguais)", () => {
+    expect(releaseOf("4.7.2.stable.official.e8f3a1b2c")).toBe("4.7.2");
+    expect(releaseOf("4.7.stable.official.abc")).toBe("4.7");
+    expect(releaseOf("4.7.2.stable.mono.official.abc")).toBeNull();
+    expect(releaseOf("4.8.beta2.official.abc")).toBeNull();
+    expect(releaseOf("4.7.2.stable.custom_build.abc")).toBeNull();
+    expect(releaseOf(null)).toBeNull();
+  });
+  it("decide o botão do Verificar", () => {
+    const ok = { found: true, version: "4.7.2.stable.official.x", web_templates: ["web_nothreads_release.zip"] };
+    expect(installOffer(null, "4.7")).toBeNull(); // ainda verificando
+    expect(installOffer({ found: false, version: null, web_templates: [] }, "4.7")).toBe("engine");
+    expect(installOffer({ ...ok, version: "4.6.3.stable.official.x" }, "4.7")).toBe("engine");
+    expect(installOffer(ok, "4.7")).toBeNull();
+    expect(installOffer({ ...ok, web_templates: [] }, "4.7")).toBe("templates");
+    expect(installOffer({ ...ok, version: "4.7.2.stable.mono.official.x", web_templates: [] }, "4.7")).toBeNull(); // .NET: manual
   });
 });

@@ -73,8 +73,39 @@ fn exes_in(dir: &Path, depth: u8) -> Vec<PathBuf> {
     out
 }
 
-/// Ordem: o que a pessoa digitou (arquivo ou pasta), GODOT_BIN, PATH, winget (Links e Packages), pastas comuns, Program Files, Steam.
-fn candidates(typed: Option<&str>) -> Vec<PathBuf> {
+/// Onde o app instala a Godot: %LOCALAPPDATA%\GameForge\godot\<versão>\ (sem precisar de admin).
+fn gf_root() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("GameForge").join("godot"))
+}
+
+/// "4.7.2" → [4, 7, 2] para ordenar por número (4.7.10 > 4.7.9).
+fn version_key(v: &str) -> Vec<u32> {
+    v.split('.').map(|s| s.parse().unwrap_or(0)).collect()
+}
+
+/// Pastas de versão instaladas pelo app, mais nova primeiro (sem .download nem .part).
+fn installed() -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = gf_root()
+        .and_then(|r| std::fs::read_dir(r).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .filter(|(n, _)| !n.starts_with('.') && !n.ends_with(".part"))
+        .collect();
+    out.sort_by_key(|(n, _)| std::cmp::Reverse(version_key(n)));
+    out
+}
+
+/// "4.7.2" serve para quem pede "4.7" (e "4.7" para "4.7").
+fn same_line(dir: &str, want: &str) -> bool {
+    dir == want || dir.starts_with(&format!("{want}."))
+}
+
+/// Ordem: o que a pessoa digitou (arquivo ou pasta), GODOT_BIN, as instaladas pelo app da versão pedida, PATH, winget
+/// (Links e Packages), pastas comuns, Program Files, Steam e, por último, as outras versões instaladas pelo app.
+fn candidates(typed: Option<&str>, want: Option<&str>) -> Vec<PathBuf> {
     let mut c: Vec<PathBuf> = vec![];
     let add_dir =|c: &mut Vec<PathBuf>, d: PathBuf, depth: u8| c.extend(exes_in(&d, depth));
     if let Some(t) = typed.map(|t| t.trim().trim_matches('"')).filter(|t| !t.is_empty()) {
@@ -87,6 +118,10 @@ fn candidates(typed: Option<&str>) -> Vec<PathBuf> {
     }
     if let Some(b) = std::env::var_os("GODOT_BIN") {
         c.push(PathBuf::from(b));
+    }
+    let (ours, others): (Vec<_>, Vec<_>) = installed().into_iter().partition(|(n, _)| want.is_some_and(|w| same_line(n, w)));
+    for (_, d) in ours {
+        add_dir(&mut c, d, 0);
     }
     if let Some(path) = std::env::var_os("PATH") {
         for d in std::env::split_paths(&path) {
@@ -120,6 +155,9 @@ fn candidates(typed: Option<&str>) -> Vec<PathBuf> {
     for steam in [r"C:\Program Files (x86)\Steam", r"D:\Steam", r"D:\SteamLibrary"] {
         add_dir(&mut c, Path::new(steam).join("steamapps").join("common").join("Godot Engine"), 0);
     }
+    for (_, d) in others {
+        add_dir(&mut c, d, 0);
+    }
     c
 }
 
@@ -132,9 +170,9 @@ fn version_of(exe: &Path) -> Option<String> {
     String::from_utf8_lossy(&out.stdout).lines().map(str::trim).find(|l| l.starts_with(|c: char| c.is_ascii_digit())).map(str::to_string)
 }
 
-fn find(typed: Option<&str>) -> Option<(PathBuf, String)> {
+fn find(typed: Option<&str>, want: Option<&str>) -> Option<(PathBuf, String)> {
     let mut seen = std::collections::HashSet::new();
-    candidates(typed)
+    candidates(typed, want)
         .into_iter()
         .filter(|p| p.is_file() && seen.insert(p.to_string_lossy().to_lowercase()))
         .filter(|p| godot_name(p) || std::env::var_os("GODOT_BIN").is_some_and(|b| Path::new(&b) == p.as_path()))
@@ -142,7 +180,7 @@ fn find(typed: Option<&str>) -> Option<(PathBuf, String)> {
 }
 
 fn exe(bin: Option<&str>) -> Result<(PathBuf, String), String> {
-    find(bin).ok_or_else(|| "SEM_GODOT: não achei a Godot neste PC. Abra 🎮 Godot → Verificar e digite o caminho do Godot_v4...exe.".into())
+    find(bin, None).ok_or_else(|| "SEM_GODOT: não achei a Godot neste PC. Abra 🎮 Godot → Verificar e digite o caminho do Godot_v4...exe.".into())
 }
 
 /// A janela do jogo: o exe sem _console (o _console é só um lançador; matar ele deixaria o jogo aberto).
@@ -182,9 +220,10 @@ pub struct GodotInfo {
 }
 
 /// O que há neste PC: a Godot (caminho e versão) e os export templates da Web dessa versão.
+/// `want` ("4.7"): sem caminho digitado, prefere a instalada pelo app dessa versão (tela antiga não manda: ignora).
 #[tauri::command(async)]
-pub fn godot_info(bin: Option<String>) -> GodotInfo {
-    let Some((path, version)) = find(bin.as_deref()) else {
+pub fn godot_info(bin: Option<String>, want: Option<String>) -> GodotInfo {
+    let Some((path, version)) = find(bin.as_deref(), want.as_deref()) else {
         return GodotInfo { found: false, path: None, version: None, templates_dir: None, web_templates: vec![] };
     };
     let dir = templates_dir(&version);
@@ -588,9 +627,323 @@ pub fn godot_capture(app: tauri::AppHandle, dir: String, bin: Option<String>, pr
     Ok(format!(".gfs/frames/{name}"))
 }
 
+// ── instalar a Godot e os export templates (godot-builds no GitHub) ──────────
+
+static CANCEL: AtomicBool = AtomicBool::new(false);
+static INSTALLING: AtomicBool = AtomicBool::new(false);
+
+const RELEASES: &str = "https://github.com/godotengine/godot-builds/releases/download";
+
+/// "4.7" ou "4.7.2": só números, porque vira URL e nome de pasta.
+fn valid_version(v: &str) -> bool {
+    let p: Vec<&str> = v.split('.').collect();
+    (2..=3).contains(&p.len()) && p.iter().all(|s| (1..=3).contains(&s.len()) && s.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// GET seguindo até 5 redirecionamentos à mão (como o download_asset), com tempo limite para não travar numa conexão parada.
+fn http(url: &str) -> Result<ureq::Response, String> {
+    let agent = ureq::AgentBuilder::new().redirects(0).timeout_connect(Duration::from_secs(30)).timeout_read(Duration::from_secs(60)).build();
+    let mut url = url.to_string();
+    for _ in 0..5 {
+        match agent.get(&url).set("User-Agent", "GameForge-Sync").call() {
+            Ok(r) if (300..400).contains(&r.status()) => url = r.header("location").ok_or("redirecionamento sem destino")?.to_string(),
+            Ok(r) => return Ok(r),
+            Err(ureq::Error::Status(404, _)) => return Err(format!("NOT_FOUND: {url}")),
+            Err(ureq::Error::Status(code, _)) => return Err(format!("NET: o GitHub respondeu {code}")),
+            Err(e) => return Err(format!("NET: {e}")),
+        }
+    }
+    Err("NET: redirecionamentos demais".into())
+}
+
+/// SHA512-SUMS.txt: "hash  nome" por linha → nome → hash.
+fn parse_sums(text: &str) -> HashMap<String, String> {
+    text.lines().filter_map(|l| l.split_once(char::is_whitespace)).map(|(h, n)| (n.trim().to_string(), h.to_lowercase())).collect()
+}
+
+fn with_suffix(p: &Path, s: &str) -> PathBuf {
+    let mut o = p.as_os_str().to_owned();
+    o.push(s);
+    PathBuf::from(o)
+}
+
+type Progress<'a> = &'a mut dyn FnMut(&'static str, u64, u64);
+
+/// Baixa em <dest>.part conferindo o tamanho e o SHA-512 (quando o release publica) e só então renomeia para <dest>.
+fn download(url: &str, dest: &Path, sha512: Option<&str>, phase: &'static str, progress: Progress) -> Result<(), String> {
+    use sha2::{Digest, Sha512};
+    use std::io::Read;
+    let resp = http(url)?;
+    let total: u64 = resp.header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let part = with_suffix(dest, ".part");
+    let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+    let (mut reader, mut buf, mut hash, mut done) = (resp.into_reader(), vec![0u8; 1 << 18], Sha512::new(), 0u64);
+    let res = loop {
+        if CANCEL.load(Ordering::SeqCst) {
+            break Err("CANCELADO".to_string());
+        }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break Ok(()),
+            Ok(n) => n,
+            Err(e) => break Err(format!("NET: a conexão caiu ({e})")),
+        };
+        if let Err(e) = file.write_all(&buf[..n]) {
+            break Err(format!("não consegui gravar o download ({e})"));
+        }
+        hash.update(&buf[..n]);
+        done += n as u64;
+        progress(phase, done, total);
+    };
+    drop(file);
+    let res = res.and_then(|_| {
+        if total > 0 && done != total {
+            return Err(format!("DOWNLOAD_RUIM: chegaram {done} de {total} bytes"));
+        }
+        match sha512 {
+            Some(want) if !format!("{:x}", hash.finalize()).eq_ignore_ascii_case(want) => Err("DOWNLOAD_RUIM: o arquivo baixado não confere com o SHA512-SUMS.txt".into()),
+            _ => Ok(()),
+        }
+    });
+    match res {
+        Ok(()) => std::fs::rename(&part, dest).map_err(|e| e.to_string()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&part);
+            Err(e)
+        }
+    }
+}
+
+/// Extrai o zip em <dest>.part (tirando `strip` do começo dos caminhos; só caminhos de dentro) e troca pela pasta <dest>.
+fn extract(zip_path: &Path, dest: &Path, strip: &str, progress: Progress) -> Result<(), String> {
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(zip_path).map_err(|e| e.to_string())?).map_err(|e| format!("DOWNLOAD_RUIM: zip ilegível ({e})"))?;
+    let total: u64 = (0..zip.len()).filter_map(|i| zip.by_index_raw(i).ok().map(|f| f.size())).sum();
+    let tmp = with_suffix(dest, ".part");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let mut done = 0u64;
+    let mut each = || -> Result<(), String> {
+        for i in 0..zip.len() {
+            if CANCEL.load(Ordering::SeqCst) {
+                return Err("CANCELADO".into());
+            }
+            let mut f = zip.by_index(i).map_err(|e| format!("DOWNLOAD_RUIM: {e}"))?;
+            let Some(name) = f.enclosed_name() else { continue };
+            let Ok(rel) = name.strip_prefix(strip) else { continue };
+            if rel.as_os_str().is_empty() {
+                continue;
+            }
+            let out = tmp.join(rel);
+            if f.is_dir() {
+                std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+                continue;
+            }
+            std::fs::create_dir_all(out.parent().unwrap_or(&tmp)).map_err(|e| e.to_string())?;
+            let mut w = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+            std::io::copy(&mut f, &mut w).map_err(|e| format!("não consegui extrair {} ({e})", rel.display()))?; // o zip confere o CRC
+            done += f.size();
+            progress("extraindo", done, total);
+        }
+        Ok(())
+    };
+    let res = each();
+    if res.is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return res;
+    }
+    if dest.exists() {
+        std::fs::remove_dir_all(dest).map_err(|e| format!("não consegui trocar {} (a Godot dessa versão está aberta?) ({e})", dest.display()))?;
+    }
+    std::fs::rename(&tmp, dest).map_err(|e| e.to_string())
+}
+
+/// Nome da pasta dos templates = templates/version.txt do .tpz (ex.: "4.7.2.stable"), como a própria Godot faz.
+fn tpz_version(tpz: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(tpz).map_err(|e| e.to_string())?).map_err(|e| format!("DOWNLOAD_RUIM: {e}"))?;
+    let mut s = String::new();
+    zip.by_name("templates/version.txt").map_err(|e| format!("DOWNLOAD_RUIM: {e}"))?.read_to_string(&mut s).map_err(|e| e.to_string())?;
+    let v = s.trim().to_string();
+    let ok = !v.is_empty() && v.len() < 40 && v.starts_with(|c: char| c.is_ascii_digit()) && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.');
+    ok.then_some(v).ok_or_else(|| "DOWNLOAD_RUIM: version.txt estranho nos templates".into())
+}
+
+#[cfg(windows)]
+fn free_bytes(dir: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDiskFreeSpaceExW(dir: *const u16, avail: *mut u64, total: *mut u64, free: *mut u64) -> i32;
+    }
+    let w: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let mut avail = 0u64;
+    // SAFETY: string terminada em 0 e ponteiro válido; os outros dois podem ser nulos (documentado).
+    (unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut avail, std::ptr::null_mut(), std::ptr::null_mut()) } != 0).then_some(avail)
+}
+#[cfg(not(windows))]
+fn free_bytes(_: &Path) -> Option<u64> {
+    None
+}
+
+/// Baixa a engine (zip, ~85 MB → ~180 MB) e/ou os export templates (.tpz, ~1,3 GB → ~1,3 GB) do release `<version>-stable`.
+fn install(version: &str, engine: bool, templates: bool, progress: Progress) -> Result<Option<PathBuf>, String> {
+    let root = gf_root().ok_or("sem LOCALAPPDATA")?;
+    let tmp = root.join(".download");
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let tpl_root = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Godot").join("export_templates")).ok_or("sem APPDATA")?;
+    std::fs::create_dir_all(&tpl_root).map_err(|e| e.to_string())?;
+    // shortcut: estimativa fixa (download + extraído) e um disco só; conferir pelo Content-Length se mudar muito de tamanho.
+    let need = if engine { 300u64 << 20 } else { 0 } + if templates { 2_700u64 << 20 } else { 0 };
+    let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
+    for d in [&tmp, &tpl_root] {
+        if let Some(free) = free_bytes(d).filter(|f| *f < need) {
+            return Err(format!("SEM_ESPACO: a instalação precisa de uns {:.1} GB livres e o disco de {} só tem {:.1} GB. Libere espaço e tente de novo.", gb(need), d.display(), gb(free)));
+        }
+    }
+    let base = format!("{RELEASES}/{version}-stable/");
+    let sums = match http(&format!("{base}SHA512-SUMS.txt")) {
+        Ok(r) => parse_sums(&r.into_string().unwrap_or_default()),
+        Err(e) if e.starts_with("NOT_FOUND") => HashMap::new(), // release sem SHA: confere só o tamanho
+        Err(e) => return Err(e),
+    };
+    let mut exe = None;
+    if engine {
+        let name = format!("Godot_v{version}-stable_win64.exe.zip");
+        let file = tmp.join(&name);
+        download(&format!("{base}{name}"), &file, sums.get(&name).map(String::as_str), "engine", progress)?;
+        let dir = root.join(version);
+        let res = extract(&file, &dir, "", progress);
+        let _ = std::fs::remove_file(&file);
+        res?;
+        exe = Some(exes_in(&dir, 0).into_iter().next().ok_or("DOWNLOAD_RUIM: o zip da Godot não tinha o executável")?);
+    }
+    if templates {
+        let name = format!("Godot_v{version}-stable_export_templates.tpz");
+        let file = tmp.join(&name);
+        download(&format!("{base}{name}"), &file, sums.get(&name).map(String::as_str), "templates", progress)?;
+        let res = tpz_version(&file).and_then(|v| extract(&file, &tpl_root.join(v), "templates", progress));
+        let _ = std::fs::remove_file(&file);
+        res?;
+    }
+    Ok(exe)
+}
+
+#[derive(Clone, serde::Serialize)]
+struct InstallProgress {
+    phase: &'static str,
+    done: u64,
+    total: u64,
+}
+
+/// Instala a Godot `<version>` (ex.: "4.7.2") em %LOCALAPPDATA%\GameForge\godot\<version>\ e, com `with_templates`, os export
+/// templates em %APPDATA%\Godot\export_templates\<version>.stable\. `engine: false` = só os templates. Progresso no evento
+/// "godot-install" ({phase: engine|templates|extraindo, done, total}). Devolve o caminho do exe (null sem engine).
+/// Erros: BUSY, CANCELADO, SEM_ESPACO, NOT_FOUND, NET, DOWNLOAD_RUIM.
+#[tauri::command(async)]
+pub fn godot_install(app: tauri::AppHandle, version: String, with_templates: bool, engine: Option<bool>) -> Result<Option<String>, String> {
+    use tauri::Emitter;
+    if !cfg!(windows) {
+        return Err("instalar a Godot pelo app só funciona no Windows".into());
+    }
+    if !valid_version(&version) {
+        return Err(format!("versão inválida: {version}"));
+    }
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return Err("BUSY: já há uma instalação da Godot em andamento.".into());
+    }
+    struct Free;
+    impl Drop for Free {
+        fn drop(&mut self) {
+            INSTALLING.store(false, Ordering::SeqCst);
+        }
+    }
+    let _free = Free;
+    CANCEL.store(false, Ordering::SeqCst);
+    let mut last = Instant::now();
+    let mut emit = |phase: &'static str, done: u64, total: u64| {
+        if done == total || last.elapsed() > Duration::from_millis(250) {
+            last = Instant::now();
+            let _ = app.emit("godot-install", InstallProgress { phase, done, total });
+        }
+    };
+    install(&version, engine.unwrap_or(true), with_templates, &mut emit).map(|p| p.map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Pede para a instalação em andamento parar (apaga o .part).
+#[tauri::command]
+pub fn godot_install_cancel() {
+    CANCEL.store(true, Ordering::SeqCst);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versions() {
+        assert!(valid_version("4.7") && valid_version("4.7.2") && valid_version("4.10.12"));
+        assert!(!valid_version("4") && !valid_version("4.7.2.1") && !valid_version("4.7/../x") && !valid_version("4..7") && !valid_version("4.7-rc1"));
+        assert!(same_line("4.7.2", "4.7") && same_line("4.7", "4.7") && !same_line("4.70", "4.7") && !same_line("4.6.3", "4.7"));
+        assert!(version_key("4.7.10") > version_key("4.7.9"));
+    }
+
+    #[test]
+    fn sums() {
+        let s = parse_sums("ABC  Godot_v4.7.2-stable_win64.exe.zip\ndef  SHA.txt\n\n");
+        assert_eq!(s.get("Godot_v4.7.2-stable_win64.exe.zip").map(String::as_str), Some("abc"));
+        assert_eq!(s.len(), 2);
+    }
+
+    /// .tpz de mentira com o mesmo formato do oficial (templates/version.txt + zips): pasta pelo version.txt, sem o "templates/".
+    #[test]
+    fn tpz_layout() {
+        let dir = std::env::temp_dir().join(format!("gfs-tpz-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let tpz = dir.join("t.tpz");
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&tpz).unwrap());
+        let opt = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (n, body) in [("templates/version.txt", "4.7.2.stable\n"), ("templates/web_nothreads_release.zip", "x"), ("../fora.txt", "mal")] {
+            w.start_file(n, opt).unwrap();
+            w.write_all(body.as_bytes()).unwrap();
+        }
+        w.finish().unwrap();
+        let v = tpz_version(&tpz).unwrap();
+        assert_eq!(v, "4.7.2.stable");
+        let mut p = |_: &'static str, _: u64, _: u64| {};
+        extract(&tpz, &dir.join(&v), "templates", &mut p).unwrap();
+        assert!(dir.join("4.7.2.stable").join("web_nothreads_release.zip").is_file());
+        assert!(dir.join("4.7.2.stable").join("version.txt").is_file());
+        assert!(!dir.join("fora.txt").exists() && !dir.join("4.7.2.stable.part").exists());
+        CANCEL.store(true, Ordering::SeqCst);
+        assert_eq!(extract(&tpz, &dir.join("x"), "templates", &mut p).unwrap_err(), "CANCELADO");
+        CANCEL.store(false, Ordering::SeqCst);
+        assert!(!dir.join("x").exists() && !dir.join("x.part").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Download de verdade (~85 MB) + SHA + extração para uma pasta de teste. Rodar com
+    /// GFS_GODOT_TEST_DIR=<pasta vazia> cargo test --lib godot -- --ignored  (não executa o exe).
+    #[test]
+    #[ignore]
+    fn real_engine_download() {
+        let dir = PathBuf::from(std::env::var("GFS_GODOT_TEST_DIR").expect("GFS_GODOT_TEST_DIR"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = format!("{RELEASES}/4.7.2-stable/");
+        let sums = parse_sums(&http(&format!("{base}SHA512-SUMS.txt")).unwrap().into_string().unwrap());
+        let name = "Godot_v4.7.2-stable_win64.exe.zip";
+        let file = dir.join(name);
+        let mut calls = 0;
+        let mut p = |_: &'static str, _: u64, _: u64| calls += 1;
+        // SHA errado: falha e não deixa .part nem o arquivo
+        assert!(download(&format!("{base}{name}"), &file, Some("00"), "engine", &mut p).unwrap_err().starts_with("DOWNLOAD_RUIM"));
+        assert!(!file.exists() && !with_suffix(&file, ".part").exists());
+        download(&format!("{base}{name}"), &file, sums.get(name).map(String::as_str), "engine", &mut p).unwrap();
+        extract(&file, &dir.join("4.7.2"), "", &mut p).unwrap();
+        let exes = exes_in(&dir.join("4.7.2"), 0);
+        assert_eq!(exes.first().and_then(|e| e.file_name()).unwrap(), "Godot_v4.7.2-stable_win64.exe");
+        assert_eq!(exes.len(), 2);
+        assert!(calls > 10);
+        assert!(http(&format!("{RELEASES}/4.7.99-stable/SHA512-SUMS.txt")).unwrap_err().starts_with("NOT_FOUND"));
+    }
 
     #[test]
     fn template_names() {

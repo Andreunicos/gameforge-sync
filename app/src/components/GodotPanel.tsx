@@ -7,22 +7,29 @@ import {
   godotExportWeb,
   godotImport,
   godotInfo,
+  godotInstall,
+  godotInstallCancel,
+  godotTags,
   godotProjectDirs,
   godotRun,
   godotServe,
   godotStatus,
   godotStop,
   hasWebPreset,
+  installOffer,
+  installVersion,
   isOldApp,
   loadBin,
   loadProject,
   majorMinor,
+  releaseOf,
   requiredVersion,
   saveBin,
   saveProject,
   versionAdvice,
   type GodotInfo,
   type GodotStatus,
+  type InstallProgress,
 } from "../godot";
 import { updateRoomSettings } from "../rooms";
 import { pickProject } from "../unreal";
@@ -75,6 +82,10 @@ export function GodotPanel({
   const [version, setVersion] = useState(room.godotVersion ?? "");
   const [scene, setScene] = useState("");
   const [hours, setHours] = useState(2);
+  const [withTpl, setWithTpl] = useState(true);
+  const [prog, setProg] = useState<InstallProgress | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [tags, setTags] = useState<string[]>([]);
 
   const run = async (label: string, fn: () => Promise<string | void>) => {
     setBusy(label);
@@ -92,7 +103,7 @@ export function GodotPanel({
     }
   };
 
-  const check = () => run("Verificando…", async () => setInfo(await godotInfo()));
+  const check = () => run("Verificando…", async () => setInfo(await godotInfo(required)));
   useEffect(() => {
     if (isTauri()) void check();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,6 +115,29 @@ export function GodotPanel({
     const t = window.setInterval(tick, 3000);
     return () => window.clearInterval(t);
   }, [dir]);
+
+  const offer = installOffer(info, required);
+  useEffect(() => {
+    if (offer === "engine" && !tags.length) void godotTags().then(setTags);
+  }, [offer, tags.length]);
+  const target = offer === "templates" ? releaseOf(info?.version) : installVersion(required, tags);
+  const install = (engine: boolean) =>
+    run(engine ? `Instalando a Godot ${target}…` : `Instalando os templates da ${target}…`, async () => {
+      if (!target) return;
+      setInstalling(true);
+      setProg(null);
+      try {
+        const exe = await godotInstall(target, engine ? withTpl : true, engine, setProg);
+        if (exe) setBin(exe);
+      } finally {
+        setInstalling(false);
+        setProg(null);
+      }
+      setInfo(await godotInfo(required));
+      return engine ? `Godot ${target} instalada${withTpl ? " com os templates do Preview Web" : ""}.` : `Templates da Godot ${target} instalados.`;
+    });
+  const mb = (b: number) => (b / 1048576).toFixed(0);
+  const phase = { engine: "Baixando a Godot", templates: "Baixando os templates", extraindo: "Extraindo" };
 
   const proj = project ?? null;
   const advice = versionAdvice(info?.version ?? null, required);
@@ -181,7 +215,7 @@ export function GodotPanel({
         {info?.found && (
           <li>
             Export templates da Web: <b>{zip ? `instalados (${zip})` : "não instalados"}</b>
-            {!zip && (
+            {!zip && offer !== "templates" && offer !== "engine" && (
               <div className="muted">
                 Na Godot: Editor → Gerenciar Modelos de Exportação → Baixar e instalar (centenas de MB). Ficam em <code>{info.templates_dir}</code>.
               </div>
@@ -189,6 +223,40 @@ export function GodotPanel({
           </li>
         )}
       </ul>
+      {offer && target && (
+        <div className="note-box small" style={{ marginBottom: 8 }}>
+          {offer === "engine" ? (
+            <>
+              <div>
+                {info?.found ? `Esta sala usa a Godot ${required}. ` : ""}O app baixa a Godot <b>{target}</b> do site oficial e instala só para você (sem pedir
+                administrador, ~180 MB). As outras Godots do PC ficam como estão.
+              </div>
+              <label style={{ display: "block", margin: "4px 0" }}>
+                <input type="checkbox" checked={withTpl} disabled={!!busy} onChange={(e) => setWithTpl(e.target.checked)} /> com os templates para o Preview Web (mais ~1,3 GB de
+                download e de disco)
+              </label>
+            </>
+          ) : (
+            <div>
+              Faltam os templates da Godot <b>{target}</b> (sem eles o Preview Web não funciona). O app baixa do site oficial (~1,3 GB) e instala onde a Godot procura.
+            </div>
+          )}
+          <div className="row" style={{ gap: 6, marginTop: 4 }}>
+            <button className="primary" disabled={!!busy} onClick={() => void install(offer === "engine")}>
+              {offer === "engine" ? `Instalar Godot ${target}` : "Instalar templates"}
+            </button>
+            {installing && <button onClick={() => void godotInstallCancel().catch(() => {})}>Cancelar</button>}
+          </div>
+          {installing && (
+            <div style={{ marginTop: 4 }}>
+              <progress style={{ width: "100%" }} value={prog?.total ? prog.done : undefined} max={prog?.total || undefined} />
+              <div className="muted">
+                {prog ? `${phase[prog.phase]}: ${mb(prog.done)}${prog.total ? ` de ${mb(prog.total)}` : ""} MB` : "Conectando ao GitHub…"} (não feche o app até terminar)
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <form
         className="row"
         onSubmit={(e) => {

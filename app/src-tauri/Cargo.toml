@@ -27,6 +27,9 @@ ureq = "2"
 base64 = "0.22"
 getrandom = "0.2"
 if-addrs = "0.15"
+# Instalar a Godot (godot_install): extrair o zip/.tpz oficial e conferir o SHA512-SUMS.txt. Mesma major do zip do updater.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+sha2 = "0.10"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
