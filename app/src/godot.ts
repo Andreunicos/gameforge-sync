@@ -301,7 +301,10 @@ export const godotImport = (dir: string, project: string | null) => invoke<strin
 export const godotRun = (dir: string, project: string | null) => invoke<void>("godot_run", { dir, bin: bin(), project });
 export const godotStop = (dir: string) => invoke<void>("godot_stop", { dir });
 export const godotStatus = (dir: string) => invoke<GodotStatus>("godot_status", { dir });
-export const godotExportWeb = (dir: string, project: string | null) => invoke<ExportResult>("godot_export_web", { dir, bin: bin(), project });
+export type ExeResult = { ms: number; dir: string; file: string; mb: number };
+export const godotExportExe = (dir: string, project: string | null, name: string) => invoke<ExeResult>("godot_export_exe", { dir, bin: bin(), project, name });
+export const revealBuild = (dir: string) => invoke("reveal_build", { dir });
+export const godotExportWeb =(dir: string, project: string | null) => invoke<ExportResult>("godot_export_web", { dir, bin: bin(), project });
 export const godotServe = (dir: string) => invoke<number>("godot_serve", { dir });
 export const godotCapture = (dir: string, project: string | null) => invoke<string>("godot_capture", { dir, bin: bin(), project });
 export interface EmbedStatus {

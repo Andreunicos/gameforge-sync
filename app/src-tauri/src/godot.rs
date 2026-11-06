@@ -729,13 +729,82 @@ pub struct ExportResult {
     threads: bool,
 }
 
+const WEB_PRESET: &str = "platform=\"Web\"\nrunnable=true\nexport_filter=\"all_resources\"\ninclude_filter=\"\"\nexclude_filter=\"\"\nexport_path=\"\"\n\n[preset.N.options]\n\nvariant/extensions_support=false\nvariant/thread_support=false\n";
+const WIN_PRESET: &str = "platform=\"Windows Desktop\"\nrunnable=true\nexport_filter=\"all_resources\"\ninclude_filter=\"\"\nexclude_filter=\"\"\nexport_path=\"\"\n\n[preset.N.options]\n\nbinary_format/embed_pck=true\nbinary_format/architecture=\"x86_64\"\ncodesign/enable=false\napplication/modify_resources=false\ndebug/export_console_wrapper=0\n";
+
+/// Garante que o export_presets.cfg tem o preset `name`; se faltar, acrescenta (o arquivo sincroniza com a sala). Devolve o texto final.
+fn ensure_preset(proj: &Path, name: &str, body: &str) -> Result<String, String> {
+    let path = proj.join("export_presets.cfg");
+    let mut cfg = std::fs::read_to_string(&path).unwrap_or_default();
+    if cfg.lines().any(|l| l.trim().replace(' ', "") == format!("name=\"{name}\"")) {
+        return Ok(cfg);
+    }
+    let mut idx = 0;
+    while cfg.contains(&format!("[preset.{idx}]")) {
+        idx += 1;
+    }
+    if !cfg.is_empty() && !cfg.ends_with('\n') {
+        cfg.push('\n');
+    }
+    cfg.push_str(&format!("\n[preset.{idx}]\n\nname=\"{name}\"\n{}", body.replace("preset.N", &format!("preset.{idx}"))));
+    std::fs::write(&path, &cfg).map_err(|e| e.to_string())?;
+    Ok(cfg)
+}
+
+#[derive(serde::Serialize)]
+pub struct ExeResult {
+    ms: u64,
+    dir: String,
+    file: String,
+    mb: f64,
+}
+
+/// Exporta o preset "Windows Desktop" para <sala>/builds/godot-windows/<jogo>.exe (pck embutido: um arquivo só).
+/// Erros: SEM_GODOT, SEM_PROJECT, NO_TEMPLATE, IMPORT_FAILED, EXPORT_FAILED.
+#[tauri::command(async)]
+pub fn godot_export_exe(app: tauri::AppHandle, dir: String, bin: Option<String>, project: Option<String>, name: String) -> Result<ExeResult, String> {
+    let room = check_room_dir(&app, &dir)?;
+    let proj = self::project(&room, project.as_deref())?;
+    ensure_preset(&proj, "Windows Desktop", WIN_PRESET)?;
+    let (exe, version) = exe(bin.as_deref())?;
+    let tpl = templates_dir(&version).map(|d| d.join("windows_release_x86_64.exe"));
+    if !tpl.as_ref().is_some_and(|w| w.is_file()) {
+        return Err(format!(
+            "NO_TEMPLATE: faltam os export templates da Godot {} ({}).",
+            template_name(&version),
+            tpl.map(|w| w.to_string_lossy().into_owned()).unwrap_or_default()
+        ));
+    }
+    if !proj.join(".godot").is_dir() {
+        import(&exe, &room, &proj)?;
+    }
+    let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let safe = if safe.is_empty() { "jogo".to_string() } else { safe };
+    let out = room.join("builds").join("godot-windows");
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let file = out.join(format!("{safe}.exe"));
+    let start = Instant::now();
+    let since = SystemTime::now() - Duration::from_secs(2);
+    let (ok, log) = run_logged(
+        &exe,
+        &["--headless".as_ref(), "--path".as_ref(), proj.as_os_str(), "--export-release".as_ref(), "Windows Desktop".as_ref(), file.as_os_str()],
+        &gfs(&room, "godot-export-exe.log"),
+        Duration::from_secs(900),
+    )?;
+    let meta = std::fs::metadata(&file).ok().filter(|m| m.modified().is_ok_and(|t| t >= since));
+    match meta {
+        Some(m) if ok || m.len() > 0 => Ok(ExeResult { ms: start.elapsed().as_millis() as u64, dir: out.to_string_lossy().into_owned(), file: file.to_string_lossy().into_owned(), mb: m.len() as f64 / 1048576.0 }),
+        _ => Err(format!("EXPORT_FAILED: {log}")),
+    }
+}
+
 /// Exporta o preset "Web" para <sala>/builds/godot-web/index.html (pasta que não sincroniza e o Claude não lê).
 /// Erros com código no começo: SEM_GODOT, SEM_PROJECT, NO_PRESET, NO_TEMPLATE, IMPORT_FAILED, EXPORT_FAILED, TIMEOUT.
 #[tauri::command(async)]
 pub fn godot_export_web(app: tauri::AppHandle, dir: String, bin: Option<String>, project: Option<String>) -> Result<ExportResult, String> {
     let room = check_room_dir(&app, &dir)?;
     let proj = self::project(&room, project.as_deref())?;
-    let cfg = std::fs::read_to_string(proj.join("export_presets.cfg")).unwrap_or_default();
+    let cfg = ensure_preset(&proj, "Web", WEB_PRESET)?;
     let (threads, custom) = web_preset(&cfg).ok_or("NO_PRESET: o export_presets.cfg do projeto não tem um preset chamado \"Web\".")?;
     let (exe, version) = exe(bin.as_deref())?;
     if custom.is_empty() {

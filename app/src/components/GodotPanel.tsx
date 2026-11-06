@@ -5,6 +5,8 @@ import {
   explain,
   godotCapture,
   godotExportWeb,
+  godotExportExe,
+  revealBuild,
   godotImport,
   godotInfo,
   godotInstall,
@@ -344,6 +346,43 @@ export function GodotPanel({
         />
       )}
       {frame && <div className="small muted">Clique no jogo para o teclado e o som funcionarem. Não carregou? Use o navegador (botão Preview Web).</div>}
+
+      <h4 style={{ marginBottom: 6 }}>Build (para entregar o jogo)</h4>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Precisa dos export templates da Godot (botão “Instalar templates” lá em cima). Se o projeto não tiver o preset de exportação, o app cria no export_presets.cfg. Os arquivos saem em <code>builds/</code> da pasta do Claude.
+      </p>
+      <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+        <button
+          className="primary"
+          disabled={!ready || !!busy}
+          onClick={() =>
+            void run("Gerando o .exe (Windows)…", async () => {
+              const r = await godotExportExe(dir!, proj, room.name);
+              void revealBuild(r.dir).catch(() => {});
+              return `.exe pronto em ${(r.ms / 1000).toFixed(0)} s (${r.mb.toFixed(0)} MB): ${r.file}`;
+            })
+          }
+          title="godot --headless --export-release “Windows Desktop”: um .exe só, com os dados dentro"
+        >
+          🪟 Build Windows (.exe)
+        </button>
+        <button
+          disabled={!ready || !!busy}
+          onClick={() =>
+            void run("Gerando a build Web…", async () => {
+              const r = await godotExportWeb(dir!, proj);
+              void revealBuild(`${dir!.replace(/[\\/]+$/, "")}\\builds\\godot-web`).catch(() => {});
+              return `Build Web pronta em ${(r.ms / 1000).toFixed(0)} s: pasta builds/godot-web (index.html + .wasm + .pck). Para publicar no itch.io, zipe a pasta inteira.`;
+            })
+          }
+          title="Exporta o preset Web para builds/godot-web"
+        >
+          🌐 Build Web
+        </button>
+        <button disabled={!dir} onClick={() => void revealBuild(`${dir!.replace(/[\\/]+$/, "")}\\builds\\godot-windows`).catch(() => setError("Ainda não existe build: gere uma primeiro."))}>
+          📂 Abrir pasta
+        </button>
+      </div>
 
       <h4 style={{ marginBottom: 6 }}>Reservas de cenas</h4>
       <p className="small muted" style={{ marginTop: 0 }}>

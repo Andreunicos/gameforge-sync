@@ -30,7 +30,7 @@ pub fn run() {
                 close::on_close_requested(window, api);
             }
         })
-        .invoke_handler(tauri::generate_handler![google::google_login, launch::open_with, launch::room_dir, builds::download_asset, builds::write_build_file, builds::reveal_build, rojo::rojo_start, rojo::rojo_stop, rojo::rojo_info, rojo::rojo_install, unreal::unreal_engines, unreal::unreal_open, unreal::unreal_server_start, unreal::unreal_server_stop, unreal::unreal_status, vpn::vpn_addrs,gitcontent::git_content, close::close_guard, close::app_close, godot::godot_info, godot::godot_import, godot::godot_run, godot::godot_stop, godot::godot_status, godot::godot_export_web, godot::godot_serve, godot::godot_capture, godot::godot_install, godot::godot_install_cancel, godot::godot_embed_start, godot::godot_embed_rect, godot::godot_embed_stop])
+        .invoke_handler(tauri::generate_handler![google::google_login, launch::open_with, launch::room_dir, builds::download_asset, builds::write_build_file, builds::reveal_build, rojo::rojo_start, rojo::rojo_stop, rojo::rojo_info, rojo::rojo_install, unreal::unreal_engines, unreal::unreal_open, unreal::unreal_server_start, unreal::unreal_server_stop, unreal::unreal_status, vpn::vpn_addrs,gitcontent::git_content, close::close_guard, close::app_close, godot::godot_info, godot::godot_import, godot::godot_run, godot::godot_stop, godot::godot_status, godot::godot_export_web, godot::godot_export_exe, godot::godot_serve, godot::godot_capture, godot::godot_install, godot::godot_install_cancel, godot::godot_embed_start, godot::godot_embed_rect, godot::godot_embed_stop])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
