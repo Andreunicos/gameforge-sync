@@ -20,10 +20,11 @@ import type { Author, RemoteFile, Room } from "../types";
 import type { RoomSync } from "./roomSync";
 import { fileDocId } from "./session";
 import { hasConflictMarkers, merge3 } from "./merge";
-import { CONSOLE_RULE, MODELOS_RULE, OLD_UE_PRESENCE, UNREAL_MCP_RULE, mergeClaudeSettings, roomTemplates, textHash, ueProjectRule, ueScripts } from "./templates";
+import { CONSOLE_RULE, GODOT_ASSETS_RULE, MODELOS_RULE, OLD_UE_PRESENCE, UNREAL_MCP_RULE, mergeClaudeSettings, roomTemplates, textHash, ueProjectRule, ueScripts } from "./templates";
 import { roomProject } from "../unreal";
 import { GODOT_IGNORE_PATH, IGNORE_PATH, UNREAL_IGNORE_PATH, hasSecretContent, isCodePath } from "./fileKinds";
 import { conflictHint, godotProjectDirs } from "../godot";
+import { AssetMirror, isAssetPath, mbText } from "../assets";
 
 const IGNORE = IGNORE_PATH; // inclui builds/ = saída do botão BUILD
 const LOCAL_DEBOUNCE_MS = 700;
@@ -73,6 +74,8 @@ export class FolderMirror {
   private offClose?: () => void;
   private imgsBusy: Promise<void> = Promise.resolve();
   private ueBusy: Promise<void> = Promise.resolve();
+  /** Sala Godot: sons/imagens/fontes/modelos (binários) pelo Firestore, ver assets.ts. */
+  private assets?: AssetMirror;
   private saveTimer: number | undefined;
   private stopped = false;
   private backups = 0;
@@ -129,6 +132,7 @@ export class FolderMirror {
       }
       this.unwatch = unwatch;
       this.offClose = onAppClose(() => this.flush());
+      if (this.room.kind === "godot") await this.startAssets();
       this.sync.setClaude(true);
       this.status("pasta pronta");
       return this.dir;
@@ -148,6 +152,7 @@ export class FolderMirror {
     this.timers.forEach((t) => window.clearTimeout(t));
     window.clearTimeout(this.mapTimer);
     await Promise.all(this.queue.values()).catch(() => {});
+    await this.assets?.stop().catch(() => {});
     await this.saveState();
   }
 
@@ -155,7 +160,25 @@ export class FolderMirror {
   async flush() {
     await Promise.all(this.queue.values()).catch(() => {});
     window.clearTimeout(this.saveTimer);
+    await this.assets?.flush().catch(() => {});
     await this.saveState();
+  }
+
+  private async startAssets() {
+    const m = new AssetMirror({
+      roomId: this.room.id,
+      dir: this.dir,
+      kind: this.room.kind,
+      me: this.author,
+      canEdit: this.canEdit,
+      projects: () => godotProjectDirs(this.sync.remoteFiles().map((f) => f.path)),
+      toast: (kind, text) => this.sync.onToast({ kind, text }),
+      activity: (path, created, size) =>
+        logActivity(this.room.id, this.author, { kind: created ? "create" : "edit", file: path, summary: `${created ? "subiu" : "atualizou"} ${path} (${mbText(size)})` }),
+    });
+    this.assets = m;
+    await m.start().catch((e) => console.warn("sons e imagens:", e));
+    if (this.stopped) await m.stop();
   }
 
   /**
@@ -281,7 +304,7 @@ export class FolderMirror {
         const p = rel ? `${rel}/${e.name}` : e.name;
         if (this.ignored(p) || e.name.startsWith(".")) continue;
         if (e.isDirectory) await walk(p);
-        else if (e.isFile && isCodePath(p)) out.push(p);
+        else if (e.isFile && isCodePath(p, this.room.kind)) out.push(p);
       }
     };
     await walk("");
@@ -365,6 +388,10 @@ export class FolderMirror {
       if (this.room.kind === "unreal" && remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("unreal-mcp")) {
         await this.sync.appendToFile("CLAUDE.md", "\n" + UNREAL_MCP_RULE, "", "unreal-mcp").catch((e) => console.warn("regra do MCP:", e));
       }
+      // Salas Godot antigas: o CLAUDE.md delas ainda diz que sons/imagens não sincronizam.
+      if (this.room.kind === "godot" && remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("## Sons, imagens, fontes e modelos")) {
+        await this.sync.appendToFile("CLAUDE.md", "\n" + GODOT_ASSETS_RULE, "", "## Sons, imagens, fontes e modelos").catch((e) => console.warn("regra dos sons:", e));
+      }
       // Salas HTML5 antigas: o CLAUDE.md delas ainda não manda ler os erros do preview.
       if ((this.room.kind ?? "html5") === "html5" && remote.get("CLAUDE.md") && !remote.get("CLAUDE.md")!.content.includes("CONSOLE.md")) {
         await this.sync.appendToFile("CLAUDE.md", "\n## Erros do jogo\n" + CONSOLE_RULE, "", "CONSOLE.md").catch((e) => console.warn("regra do CONSOLE.md:", e));
@@ -407,7 +434,12 @@ export class FolderMirror {
   private onDiskEvent(paths: string[]) {
     for (const full of paths) {
       const rel = full.slice(this.dir.length + 1).split("\\").join("/");
-      if (!rel || this.ignored(rel) || !isCodePath(rel)) continue;
+      if (!rel || this.ignored(rel)) continue;
+      if (this.assets && isAssetPath(rel, this.room.kind)) {
+        this.assets.onDisk(rel);
+        continue;
+      }
+      if (!isCodePath(rel, this.room.kind)) continue;
       window.clearTimeout(this.timers.get(rel));
       this.timers.set(
         rel,

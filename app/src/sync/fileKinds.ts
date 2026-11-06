@@ -15,7 +15,8 @@ const EXT = new Set(
     // texto, shaders, jogos
     "md rst txt svg glsl frag vert wgsl hlsl usf ush uproject uplugin " +
     // Godot (texto): project.godot, cenas/recursos, shaders, traduções .po, e o .uid (4.4+) que o script/shader leva junto:
-    // sem ele cada PC gera outro uid:// e as cenas que apontam para o script mudam à toa (.import e .translation ficam fora).
+    // sem ele cada PC gera outro uid:// e as cenas que apontam para o script mudam à toa (.translation fica fora; .import
+    // só na sala Godot, ver isCodePath).
     "godot gd tscn tres gdshader gdshaderinc gdextension uid po pot"
   ).split(" "),
 );
@@ -56,11 +57,15 @@ export function hasSecretContent(rel: string, text: string): boolean {
   return /(^|\/)export_presets\.cfg$/i.test(rel) && /^[^=\n]*(password|encryption_key)[^=\n]*=\s*"[^"\n]+"/im.test(text);
 }
 
-/** O arquivo é texto de código/script que a sala aceita? (`rel` = caminho relativo à pasta do projeto) */
-export function isCodePath(rel: string): boolean {
+/** O arquivo é texto de código/script que a sala aceita? (`rel` = caminho relativo à pasta do projeto)
+ * Sala Godot (`kind` = "godot"): também o .import ao lado de cada som/imagem (som.ogg.import, texto pequeno com o uid://
+ * e as opções de importação; o path=res://.godot/imported/... é o mesmo em todo PC). Sem ele cada PC importa de novo com
+ * outro uid e as cenas que apontam para o som mudam à toa. Nas outras salas .import continua fora. */
+export function isCodePath(rel: string, kind?: string): boolean {
   if (SECRET_PATH.test(rel) || NOISE.test(rel)) return false;
   const base = rel.slice(rel.lastIndexOf("/") + 1).toLowerCase();
   if (NAMES.has(base)) return true;
   const dot = base.lastIndexOf(".");
-  return dot > 0 && EXT.has(base.slice(dot + 1));
+  const ext = base.slice(dot + 1);
+  return dot > 0 && (EXT.has(ext) || (kind === "godot" && ext === "import"));
 }

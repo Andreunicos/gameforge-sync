@@ -37,6 +37,7 @@ import { ensureBaseline, maybeAutoCheckpoint, watchCheckpoints } from "../histor
 import { onAppClose } from "../closeGuard";
 import { loadHosted, useMueWatch } from "../vpn";
 import { useGitContent } from "../gitContentSync";
+import { assetView, onAssetView } from "../assets";
 
 export function RoomScreen({ user, roomId }: { user: User; roomId: string }) {
   const [room, setRoom] = useState<Room | null | undefined>(undefined);
@@ -128,6 +129,9 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
     }
   }, [rojo.info, readOnly]);
   const writes = useSyncExternalStore(onWrites, writesToday);
+  const av = useSyncExternalStore(onAssetView, assetView);
+  const avLive = av.roomId === room.id && av.running && av.on;
+  const avBadge = !avLive ? "" : av.paused ? " 🎵⚠" : av.sending || av.receiving ? ` 🎵${av.sending ? ` ${av.sending}↑` : ""}${av.receiving ? ` ${av.receiving}↓` : ""}` : "";
 
   useEffect(() => {
     sync.onToast = (t) => {
@@ -367,8 +371,9 @@ function Workspace({ user, room, sync }: { user: User; room: Room; sync: RoomSyn
           </button>
         )}
         {isGodot && (
-          <button onClick={() => setModal("godot")} title="Verificar a Godot, rodar o jogo, Preview Web, capturar tela e reservar cenas">
+          <button onClick={() => setModal("godot")} title="Verificar a Godot, rodar o jogo, Preview Web, capturar tela, sons e imagens e reservar cenas">
             🎮 Godot{claims.list.some((c) => c.exp > claims.now) ? ` (${claims.list.filter((c) => c.exp > claims.now).length})` : ""}
+            {avBadge}
           </button>
         )}
         {isHtml5 && !readOnly && (

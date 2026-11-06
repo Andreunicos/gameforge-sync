@@ -123,7 +123,7 @@ export class Workspace {
         if (name.startsWith(".") || ignored(p)) continue;
         const st = statSync(this.abs(p));
         if (st.isDirectory()) walk(p);
-        else if (st.isFile() && isCodePath(p)) out.push(p);
+        else if (st.isFile() && isCodePath(p, godot ? "godot" : undefined)) out.push(p); // .import só na sala Godot
       }
     };
     walk("");

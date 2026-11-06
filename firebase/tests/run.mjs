@@ -12,6 +12,8 @@ console.log("── reserva automática");
 await import("./auto.mjs");
 console.log("── sala (tipo e versão da Godot)");
 await import("./rooms.mjs");
+console.log("── sons e imagens (assets/abin + app/src/assets.ts)");
+await import("./assets.mjs");
 const n = failures();
 console.log(n ? `${n} FALHA(S)` : "TUDO OK");
 process.exit(n ? 1 : 0);

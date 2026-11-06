@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { claimAsset, claimKey, hhmm, releaseAsset, type Claim } from "../claims";
 import {
@@ -34,6 +34,7 @@ import {
   type InstallProgress,
 } from "../godot";
 import { updateRoomSettings } from "../rooms";
+import { DAY_LIMIT, assetCommands, assetView, assetsEnabled, mbText, onAssetView, setAssetsEnabled, type ItemState } from "../assets";
 import { pickProject } from "../unreal";
 import type { RoomSync } from "../sync/roomSync";
 import type { Author, Room } from "../types";
@@ -384,6 +385,8 @@ export function GodotPanel({
         </button>
       </div>
 
+      {!readOnly && <AssetsBox roomId={room.id} dir={dir} />}
+
       <h4 style={{ marginBottom: 6 }}>Reservas de cenas</h4>
       <p className="small muted" style={{ marginTop: 0 }}>
         Uma pessoa por cena (.tscn/.tres): o merge é por linha e duas pessoas na mesma cena geram conflito. O Claude lê em <code>.gfs/CENAS.md</code>.
@@ -443,5 +446,75 @@ export function GodotPanel({
         <button onClick={onClose}>Fechar</button>
       </div>
     </Modal>
+  );
+}
+
+const ITEM: Record<ItemState, [string, string]> = {
+  ok: ["var(--ok)", "ok"],
+  enviando: ["#f5a623", "enviando"],
+  baixando: ["#4a90e2", "baixando"],
+  erro: ["#e5484d", "erro"],
+  grande: ["#e5484d", "grande demais"],
+  cota: ["#e5484d", "cota"],
+};
+
+/** Sons, imagens, fontes e modelos pelo Firestore (assets.ts): liga/desliga por PC, últimos arquivos, cota do dia. */
+function AssetsBox({ roomId, dir }: { roomId: string; dir?: string }) {
+  const v = useSyncExternalStore(onAssetView, assetView);
+  const [on, setOn] = useState(() => assetsEnabled(roomId));
+  const live = v.roomId === roomId && v.running;
+  return (
+    <>
+      <h4 style={{ marginBottom: 6 }}>Sons e imagens</h4>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        .ogg .wav .mp3 .png .jpg .webp .ttf .otf .glb .gltf dentro do projeto sobem sozinhos da pasta do Claude e chegam nos outros PCs no mesmo lugar
+        (até 25 MB cada). Apagar não propaga. Quando os dois mudam o mesmo arquivo, fica o mais novo e o outro vai para <code>.gfs/backup</code>.
+      </p>
+      <label className="small" style={{ display: "block", marginBottom: 6 }}>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => {
+            setOn(e.target.checked);
+            setAssetsEnabled(roomId, e.target.checked);
+          }}
+        />{" "}
+        Sincronizar sons e imagens neste PC
+      </label>
+      {!dir && <p className="small">Ligue a pasta do Claude (acima) para sincronizar.</p>}
+      {live && v.canUpload === false && (
+        <div className="error-box small">Este app ainda não consegue ENVIAR sons e imagens (só baixa). Feche e abra o GameForge para atualizar.</div>
+      )}
+      {live && v.paused && <div className="error-box small">{v.paused}</div>}
+      {live && on && (
+        <>
+          <div className="small" style={{ marginBottom: 4 }}>
+            <b>{v.synced}</b> sincronizados
+            {v.missing > 0 && <> · <b>{v.missing}</b> faltando aqui</>}
+            {v.sending > 0 && <> · {v.sending} enviando</>}
+            {v.receiving > 0 && <> · {v.receiving} baixando</>}
+            {v.held > 0 && <> · <b>{v.held}</b> só neste PC esperando ({mbText(v.heldBytes)})</>} · sala: {mbText(v.roomBytes)}
+          </div>
+          <div className="small muted" style={{ marginBottom: 6 }}>
+            Cota de hoje neste PC (zera às 05:00): enviados {mbText(v.up)} de {mbText(DAY_LIMIT.up)} · baixados {mbText(v.down)} de {mbText(DAY_LIMIT.down)}
+          </div>
+          <div className="row" style={{ gap: 6, marginBottom: 6 }}>
+            <button onClick={() => void assetCommands.syncNow()} title="Confere a pasta e a sala de novo e envia o que estava esperando">
+              Sincronizar agora
+            </button>
+            <button onClick={() => assetCommands.downloadMissing()} disabled={v.missing === 0}>
+              Baixar tudo que falta
+            </button>
+          </div>
+          {v.recent.map((i) => (
+            <div key={i.path} className="small ellipsis" title={i.note ?? ""}>
+              <span className="dot" style={{ background: ITEM[i.state][0], display: "inline-block", marginRight: 6 }} />
+              {i.path} — {ITEM[i.state][1]}
+              {i.note && <span className="muted"> · {i.note}</span>}
+            </div>
+          ))}
+        </>
+      )}
+    </>
   );
 }

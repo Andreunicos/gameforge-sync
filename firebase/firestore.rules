@@ -175,6 +175,48 @@ service cloud.firestore {
         allow delete: if canEdit(roomId);
       }
 
+      // ── sons/imagens/fontes/modelos da sala Godot (binários; ver app/src/assets.ts) ──
+      // Fora de `files` de propósito: app antigo e gfs tratam `files` como texto e estragariam o binário.
+      // Manifesto: um documento por caminho, id = sha256 do caminho em minúsculas (no Windows Som.ogg e som.ogg são o
+      // mesmo arquivo). Qualquer editor atualiza (o último vence), mas sempre em nome de quem grava. Apagar = só o dono.
+      match /assets/{assetId} {
+        allow read: if isMember(roomId);
+        allow create, update: if canEdit(roomId) && validAsset(assetId);
+        allow delete: if isOwner(roomId);
+
+        function validAsset(assetId) {
+          let d = request.resource.data;
+          return d.keys().hasOnly(['path', 'sha256', 'size', 'parts', 'uid', 'name', 'ts'])
+            && d.path is string && d.path.size() > 0 && d.path.size() <= 300
+            // relativo à sala: sem barra/unidade no começo, sem \ nem :, sem ".." (ninguém escreve fora da pasta dos outros)
+            && d.path.matches('^[^/][^\\\\:]*$')
+            && !d.path.matches('(.*/)?[.][.](/.*)?')
+            && assetId == hashing.sha256(d.path.lower()).toHexString().lower()
+            && d.sha256 is string && d.sha256.matches('^[0-9a-f]{64}$')
+            && d.size is int && d.size >= 0 && d.size <= 25000000
+            // pedaços de 900.000 bytes (PART_BYTES em assets.ts)
+            && d.parts is int && d.parts * 900000 >= d.size && (d.parts == 0 || (d.parts - 1) * 900000 < d.size)
+            && d.uid == request.auth.uid
+            && d.name is string && d.name.size() <= 80
+            && d.ts == request.time;
+        }
+      }
+
+      // ── pedaços dos binários: {sha256 do arquivo}~{i}, imutáveis (conteúdo endereçado por hash: o mesmo som em dois
+      // lugares ou voltar a uma versão antiga não sobe de novo). Quem baixa confere o sha256 antes de gravar no disco.
+      match /abin/{binId} {
+        allow read: if isMember(roomId);
+        allow create: if canEdit(roomId)
+          && binId.matches('^[0-9a-f]{64}~[0-9]{1,2}$')
+          && request.resource.data.keys().hasOnly(['data', 'i'])
+          && request.resource.data.i is int
+          && binId == binId.split('~')[0] + '~' + string(request.resource.data.i)
+          && request.resource.data.data is bytes
+          && request.resource.data.data.size() > 0
+          && request.resource.data.data.size() <= 900000;
+        allow delete: if isOwner(roomId);
+      }
+
       // ── reservas de assets (soft locks, salas Unreal; ver app/src/claims.ts) ──
       // UM documento 'assets' com c = {chave: reserva}, para a transação do cliente ver a tabela inteira
       // (sobreposição pasta × arquivo). Cada gravação mexe só na chave k (e pode limpar UMA vencida em g).

@@ -294,15 +294,23 @@ export const GODOT_RULES = `## Godot pela linha de comando
 - Nunca edite .godot/, arquivos .import nem builds/ (gerados pela Godot e pelo app).
 `;
 
+/** Sons/imagens pelo app (assets.ts). Salas Godot antigas ganham esta seção no fim do CLAUDE.md (pasta do Claude). */
+export const GODOT_ASSETS_RULE = `## Sons, imagens, fontes e modelos (vale mais que qualquer "não sincroniza" acima)
+- Com o app aberto, .ogg .wav .mp3 .png .jpg .webp .ttf .otf .glb .gltf que você colocar dentro da pasta do projeto Godot sobem sozinhos para os outros PCs (até 25 MB por arquivo; prefira .ogg para som e música). O .import ao lado (som.ogg.import) vai junto como texto: não edite.
+- Não renomeie nem mova sons/imagens em massa: cada arquivo renomeado sobe de novo e o nome antigo continua nos outros PCs (apagar não propaga).
+- Você não ouve áudio: ao criar ou trocar um som, diga à sua pessoa o nome do arquivo, a duração e onde ele toca, para ela ouvir e avaliar.
+`;
+
 export const ROOM_CLAUDE_MD_GODOT = `# Sala do GameForge Sync (Godot 4.x) — regras para o Claude
 
 Esta pasta tem um projeto Godot compartilhado: outras pessoas e os Claudes delas mexem AO MESMO TEMPO.
 Com o app GameForge Sync aberto, o TEXTO sincroniza sozinho em segundos (.gd, .tscn, .tres, .gdshader, project.godot,
-export_presets.cfg, .uid, .json, .md...). NÃO sincronizam por aqui: imagens, sons, fontes, modelos, .import, .godot/ e builds/ (chegam por Git/zip).
+export_presets.cfg, .uid, .json, .md, .import...); sons, imagens, fontes e modelos também (veja abaixo). NÃO sincronizam: .godot/ e builds/.
 
 ${MODELOS_RULE}
 ${BUGS_SECTION}
 ${GODOT_RULES}
+${GODOT_ASSETS_RULE}
 ## Como trabalhar
 - Mexa só no necessário; consulte .gfs/MAPA.md (nome@linha) e leia só aquelas linhas.
 - Se uma edição falhar porque o arquivo mudou, leia de novo só aquele trecho: foi alguém da sala.
@@ -329,7 +337,7 @@ export const ROOM_GAME_MD_GODOT = `# GAME.md — visão do jogo (Godot 4.x)
 - Versão da Godot (todos iguais): ${GODOT_VERSION}
 - Renderizador: gl_compatibility (igual na Web e no .exe)
 - Cenas principais e quem cuida de cada uma:
-- Como imagens e sons chegam a cada pessoa: (Git / zip)
+- Como imagens e sons chegam a cada pessoa: pelo app (sobem sozinhos, até 25 MB por arquivo)
 
 ## Decisões já tomadas
 -
