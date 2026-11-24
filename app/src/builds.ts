@@ -222,23 +222,33 @@ export async function runBuild(p: BuildParams) {
     const base = await gh<{ tree: { sha: string } }>(token, `/git/commits/${main.object.sha}`);
     const meta = { name: p.room.name, slug, appId: appIdFor(p.room), version: p.version, entry: p.entry ?? "index.html" };
     // Um blob por arquivo: a árvore com o conteúdo inline estoura o limite do GitHub ("input too large") em jogos de vários MB.
-    const toBlob = async (path: string, content: string) => ({
-      path,
-      mode: "100644",
-      type: "blob",
-      sha: (await gh<{ sha: string }>(token, "/git/blobs", { method: "POST", body: JSON.stringify({ content, encoding: "utf-8" }) })).sha,
-    });
-    const entries: { path: string; mode: string; type: string; sha: string }[] = [];
-    const queue = [...p.files.map((f) => [`game/${f.path}`, f.content] as const), ["build.json", JSON.stringify(meta, null, 2)] as const];
-    await Promise.all(
-      Array.from({ length: 6 }, async () => {
-        for (let job = queue.shift(); job; job = queue.shift()) entries.push(await toBlob(job[0], job[1]));
-      }),
-    );
-    const tree = await gh<{ sha: string }>(token, "/git/trees", {
-      method: "POST",
-      body: JSON.stringify({ base_tree: base.tree.sha, tree: entries }),
-    });
+    // Poucas requisições (o GitHub bloqueia rajadas: "secondary rate limit"): arquivos grandes viram blob, os pequenos vão
+    // inline em lotes de ~900 KB, e cada lote é uma árvore encadeada na anterior.
+    const all = [...p.files.map((f) => ({ path: `game/${f.path}`, content: f.content })), { path: "build.json", content: JSON.stringify(meta, null, 2) }];
+    const big = all.filter((f) => f.content.length > 300_000);
+    const batches: { path: string; mode: string; type: string; content?: string; sha?: string }[][] = [[]];
+    let size = 0;
+    for (const f of all.filter((x) => x.content.length <= 300_000)) {
+      if (size + f.content.length > 900_000) {
+        batches.push([]);
+        size = 0;
+      }
+      batches[batches.length - 1].push({ path: f.path, mode: "100644", type: "blob", content: f.content });
+      size += f.content.length;
+    }
+    for (const f of big) {
+      const b = await gh<{ sha: string }>(token, "/git/blobs", { method: "POST", body: JSON.stringify({ content: f.content, encoding: "utf-8" }) });
+      batches[0].push({ path: f.path, mode: "100644", type: "blob", sha: b.sha });
+      await sleep(400);
+    }
+    let baseTree = base.tree.sha;
+    let tree = { sha: baseTree };
+    for (const entries of batches) {
+      if (!entries.length) continue;
+      tree = await gh<{ sha: string }>(token, "/git/trees", { method: "POST", body: JSON.stringify({ base_tree: baseTree, tree: entries }) });
+      baseTree = tree.sha;
+      await sleep(400);
+    }
     const commit = await gh<{ sha: string }>(token, "/git/commits", {
       method: "POST",
       body: JSON.stringify({ message: `Build ${p.room.name} ${p.version} (${p.by.name})`, tree: tree.sha, parents: [main.object.sha] }),
